@@ -764,37 +764,4 @@ ScopeThroughput::~ScopeThroughput()
     ProfilerThroughputEnd(m_stateId, m_eventId, m_bytes);
 }
 
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Cuda profiling helper.
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-CudaProfilerTimer::CudaProfilerTimer(bool enable, int syncIterations, int maxIterations)
-{
-    m_enable = enable;
-    m_syncIterations = syncIterations;
-    m_maxIterations = maxIterations;
-    m_iterationCnt = 0;
-    m_iterationCntTotal = 0;
-    SyncCudaScopeSetFlags(false, false);
-}
-
-void CudaProfilerTimer::Update()
-{
-    if (!m_enable) return;
-
-    if (m_iterationCnt == m_syncIterations && (m_iterationCntTotal < m_maxIterations || m_maxIterations == -1))
-    {
-        SyncCudaScopeSetFlags(true, true);
-        m_iterationCnt = 0;
-    }
-    else
-    {
-        SyncCudaScopeSetFlags(false, false);
-    }
-
-    m_iterationCnt++;
-    m_iterationCntTotal++;
-}
-
 }}}

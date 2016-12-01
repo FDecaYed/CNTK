@@ -178,36 +178,4 @@ private:
 
 #define THROUGHPUT_SCOPE(eventId, bytes)    ScopeThroughput __st##eventId(eventId, bytes);
 
-
-//
-// CUDA profiling helpers.
-//
-
-void PERF_PROFILER_API SyncCudaScopeSetFlags(bool syncEnabled, bool profilingEnabled);
-void PERF_PROFILER_API SyncCudaScopeGetFlags(bool& syncEnabled, bool& profilingEnabled);
-
-struct PERF_PROFILER_API CudaProfilerTimer
-{
-    //
-    // Setup the CUDA profiler.
-    // enable: flag indicating if profiler is enabled
-    // syncIterations: Number of iterations between profiling & sync (ex: 100 means that we profile every 100 iterations)
-    // maxIterations: Stop syncing & profiling after this many iterations. -1 indicates to never stop.
-    //                (ex: 1000 means that we stop after 1000 iterations)
-    //
-    CudaProfilerTimer(bool enable, int syncIterations, int maxIterations);
-
-    //
-    // Main function that enables profiling, to be called at the beggining of each iteration.
-    //
-    void Update();
-
-private:
-    bool    m_enable;
-    int     m_syncIterations;
-    int     m_maxIterations;
-    int     m_iterationCnt;
-    int     m_iterationCntTotal;
-};
-
 }}}

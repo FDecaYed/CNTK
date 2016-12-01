@@ -1026,8 +1026,6 @@ size_t SGD<ElemType>::TrainOneEpoch(ComputationNetworkPtr net,
             fineGrainedPerfMeasurementTimer.Start();
         auto minibatchProfilerState = ProfilerTimeBegin();
 
-        m_pCudaProfilerTimer->Update();
-
         // get minibatch
         // TODO: is it guaranteed that the GPU is already completed at this point, is it safe to overwrite the buffers?
         size_t actualMBSize = 0;

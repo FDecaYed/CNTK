@@ -602,9 +602,6 @@ int wmainWithBS(int argc, wchar_t* argv[]) // called from wmain which is a wrapp
     // Setup profiling
     ProfilerContext profilerContext;
     SetupProfiling<ScriptableObjects::IConfigRecord>(profilerContext, config, paralleltrain ? (int)mpi->CurrentNodeRank() : 0);
-#ifndef CPUONLY
-    AsyncGPUProfiler gpuProfiler;
-#endif
 
     // execute the actions
     // std::string type = config(L"precision", "float");
@@ -804,9 +801,6 @@ int wmainOldCNTKConfig(int argc, wchar_t* argv[])
     // Setup profiling
     ProfilerContext profilerContext;
     SetupProfiling<ConfigParameters>(profilerContext, config, paralleltrain ? (int)mpi->CurrentNodeRank() : 0);
-#ifndef CPUONLY
-    AsyncGPUProfiler gpuProfiler;
-#endif
 
     // run commands
     std::string type = config(L"precision", "float");

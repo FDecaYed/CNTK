@@ -346,8 +346,7 @@ public:
           m_prevChosenMinibatchSize(0),
           m_lastFinishedEpochTrainLoss(0.0),
           m_distGradAgg(nullptr),
-          m_gradHeader(nullptr),
-          m_pCudaProfilerTimer(nullptr)
+          m_gradHeader(nullptr)
     {
         msra::files::make_intermediate_dirs(m_modelPath);
     }
@@ -375,12 +374,6 @@ public:
                IDataReader* validationSetDataReader,
                const DEVICEID_TYPE deviceID,
                const bool makeMode = true);
-
-    // Set instance of CudaProfilerTimer to enable performance measurement of CUDA calls.
-    void SetCudaProfilerTimer(CudaProfilerTimer& cudaProfilerTimer)
-    {
-        m_pCudaProfilerTimer = &cudaProfilerTimer;
-    }
 
 protected:
 
@@ -581,8 +574,6 @@ protected:
     std::shared_ptr<struct DistGradHeader> m_gradHeader;
 
     shared_ptr<IMASGD<ElemType>> m_pMASGDHelper;
-
-    CudaProfilerTimer* m_pCudaProfilerTimer;
 
 private:
     void MarkDropoutNodesEvalTimeStampAsOutdated(const ComputationNetworkPtr& net, const ComputationNodeBasePtr& criterionNode);
