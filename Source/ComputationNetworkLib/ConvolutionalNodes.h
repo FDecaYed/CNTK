@@ -290,6 +290,7 @@ public:
     {
         Base::Save(fstream);
         fstream << m_convolution2D;
+        TensorShape(1).Save(fstream); // Write out a dummy tensor, so that model created can be used later after implementing reading this tensor in this model version
     }
 
     void Load(File& fstream, size_t modelVersion) override
