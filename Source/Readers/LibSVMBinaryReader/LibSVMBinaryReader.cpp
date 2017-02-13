@@ -380,7 +380,6 @@ void SparseBinaryInput<ElemType>::Shuffle()
     if (Randomize())
     {
         shuffle(&(m_readOrder[0]), &(m_readOrder[m_readOrderLength - 1]), m_randomEngine);
-        // ToDo: move to different shuffle implementation to be platform independent
     }
 }
 

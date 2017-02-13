@@ -3,13 +3,12 @@ Layers Library Reference
 
 CNTK predefines a number of common "layers," which makes it very easy to
 write simple networks that consist of standard layers layered on top of
-each other. Layers are function objects that can be used like a regular
-:class:`~cntk.ops.functions.Function` but hold learnable parameters 
-and have an additional pair of ``()`` to pass construction parameters 
-or attributes.
+each other. Layers are function objects that can be used like regular
+``Functions`` but hold learnable parameters and have an additional pair
+of ``()`` to pass construction parameters or attributes.
 
 For example, this is the network description for a simple 1-hidden layer
-model using the :class:`~cntk.layers.Dense` layer:
+model using the ``Dense()`` layer:
 
 ::
 
@@ -49,7 +48,7 @@ layers of identical dimensions can be written like this:
 ::
 
     my_model = Sequential ([
-        For(range(6), lambda: \
+        LayerStack(6, lambda: \
             Dense(2048, activation=sigmoid))
         Dense(9000, activation=softmax)
     ])
@@ -221,7 +220,7 @@ Parameters
 -  ``map_rank``: if given, the number of leading dimensions that are not
    transformed by ``Dense()`` (``input_rank`` must not be given)
 -  ``init`` (default: ``glorot_uniform()``): initializer descriptor for
-   the weights. See `here <cntk.html#module-cntk.initializer>`_
+   the weights. `See here <cntk.html#module-cntk.initializer>`__ 
    for a full list of random-initialization options.
 -  ``bias``: if ``False``, do not include a bias parameter
 -  ``init_bias`` (default: ``0``): initializer for the bias
@@ -266,7 +265,7 @@ will have the tensor dimensions ``(..., shape[1], shape[0])``.
 CNTK's matrix product will interpret these extra output or input
 dimensions as if they were flattened into a long vector. For more
 details on this, see the documentation of
-`Times() <https://github.com/Microsoft/CNTK/wiki/Times-and-TransposeTimes>`_.
+```Times()`` <https://github.com/Microsoft/CNTK/wiki/Times-and-TransposeTimes>`__
 
 The options ``input_rank`` and ``map_rank``, which are mutually
 exclusive, can specify that not all of the input axes of a tensor should
@@ -316,7 +315,7 @@ Parameters
 -  ``num_filters``: number of output channels (number of filters)
 -  ``activation``: optional non-linearity, e.g. ``activation=relu``
 -  ``init``: initializer descriptor for the weights, e.g.
-   ``glorot_uniform()``. See `here <cntk.html#module-cntk.initializer>`_ for a full
+   ``glorot_uniform()``. `See here <cntk.html#module-cntk.initializer>`__ for a full
    list of random-initialization options.
 -  ``pad``: if ``False`` (default), then the filter will be shifted over
    the "valid" area of input, that is, no value outside the area is
@@ -472,7 +471,7 @@ This operation is structurally very similar to convolution, except that
 the operation applied to the sliding window is of a different nature.
 
 All considerations regarding input dimensions, padding, and strides
-apply, so please see :ref:`convolution` for more
+apply, so please see ```Convolution()`` :ref:`convolution` for more
 detail.
 
 Example:
@@ -483,7 +482,7 @@ Example:
     p = MaxPooling((3,3), strides=(2,2))(c)
 
 GlobalMaxPooling(), GlobalAveragePooling()
-------------------------------------------
+------------------------------
 
 Factory functions to create a global-max-pooling or global-average-pooling layer.
 
@@ -622,7 +621,7 @@ a 300-dimensional vector:
 
 In addition to ``is_sparse=True``, one would also typically read sparse
 data from disk. Here is an example of reading sparse text input with the
-`CNTKTextFormatReader <https://github.com/Microsoft/CNTK/wiki/CNTKTextFormat-Reader>`_:
+```CNTKTextFormatReader`` <https://github.com/Microsoft/CNTK/wiki/CNTKTextFormat-Reader>`__:
 
 ::
 
@@ -719,7 +718,7 @@ dimension compared to above), use this:
 
     h_fwd = Recurrence(LSTM(150))(e)
     h_bwd = Recurrence(LSTM(150), go_backwards=True)(e)
-    h = splice (h_fwd, h_bwd)
+    h = splice ([h_fwd, h_bwd])
 
 .. _lstm:
 
@@ -745,7 +744,7 @@ Parameters
    cell dimension to the output shape.
 -  ``use_peepholes`` (optional): if ``True``, then use peephole
    connections in the LSTM
--  ``init``: initializer descriptor for the weights. See `here <cntk.html#module-cntk.initializer>`_
+-  ``init``: initializer descriptor for the weights. `See here <cntk.html#module-cntk.initializer>`__
    for a full list of initialization options.
 -  ``enable_self_stabilization`` (optional): if ``True``, insert a
    ``Stabilizer()`` for the hidden state and cell
@@ -847,8 +846,8 @@ vector:
 
     x  = ...                   # input value, e.g. a N-dimensional one-hot vector
     xp = Delay()(x)            # previous value
-    xn = Delay(T=-1)(x)        # next value (negative delay)
-    tg = splice (xp, x, xn)    # concatenate all into a 3N-dimensional three-hot vector
+    xn = Delay(T-1)(x)         # next value (negative delay)
+    tg = splice ([xp, x, xn])  # concatenate all into a 3N-dimensional three-hot vector
 
 BatchNormalization(), LayerNormalization(), Stabilizer()
 --------------------------------------------------------
@@ -1003,8 +1002,8 @@ The ``FGH`` function defined above means the same as
 
     y = H(G(F(x))) 
 
-This is known as `function
-composition <https://en.wikipedia.org/wiki/Function_composition>`_,
+This is known as `"function
+composition" <https://en.wikipedia.org/wiki/Function_composition>`__,
 and is especially convenient for expressing neural networks, which often
 have this form:
 
@@ -1057,14 +1056,14 @@ deep-neural network work on speech recognition:
 
 .. _layerstack:
 
-For()
------
+LayerStack()
+------------
 
 Repeats a layer multiple times.
 
 ::
 
-    For(range(N), constructor)
+    LayerStack(N, constructor)
 
 Parameters
 ~~~~~~~~~~
@@ -1083,7 +1082,7 @@ model parameters.
 Description
 ~~~~~~~~~~~
 
-``For()`` creates a sequential model by repeatedly executing a
+``LayerStack()`` creates a sequential model by repeatedly executing a
 *constructor lambda* passed to it; that is, you pass a Python function
 that creates a layer, e.g. using the Python ``lambda`` syntax.
 
@@ -1099,7 +1098,7 @@ is as easy as:
 
 ::
 
-    model = For(range(3), lambda: Dense(128))
+    model = LayerStack(3, lambda: Dense(128))
 
 Note that because you pass in a lambda for creating the layer, each
 layer will be separately constructed. This is important, because this
@@ -1120,14 +1119,14 @@ the one-parameter lambda form allows you to say this (notice the
 
 ::
 
-    model = For(range(3), lambda i: Dense(128 * 2**i))
+    model = LayerStack(3, lambda i: Dense(128 * 2**i))
 
 or this:
 
 ::
 
     dims = [128,256,512]
-    model = For(range(3), lambda i: Dense(dims[i]))
+    model = LayerStack(3, lambda i: Dense(dims[i]))
 
 Example
 ~~~~~~~
@@ -1139,12 +1138,13 @@ architecture for image recognition:
 
     with default_options(activation=relu):
         model = Sequential([
-            For(range(3), lambda i: [  # lambda with one parameter
+            LayerStack(3, lambda i: [  # lambda with one parameter
                 Convolution((3,3), [64,96,128][i], pad=True),  # depth depends on i
                 Convolution((3,3), [64,96,128][i], pad=True),
                 MaxPooling((3,3), strides=(2,2))
             ]),
-            For(range(2), lambda : [   # lambda without parameter
+            LayerStack(2, lambda : [   # lambda without parameter
+
                 Dense(1024),
                 Dropout(0.5)
             ]),

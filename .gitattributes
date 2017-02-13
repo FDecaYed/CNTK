@@ -21,7 +21,6 @@
 *.html text
 *.lyx text
 *.bib text
-*.json text
 .gitkeep text
 KaldiReaderReadme text
 Readme text
@@ -88,7 +87,6 @@ Makefile text
 *.log text
 
 Dockerfile* text
-.dockerignore text
 
 # Speech data
 mean.363 text

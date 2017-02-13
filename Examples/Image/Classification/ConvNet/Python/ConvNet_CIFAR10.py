@@ -4,7 +4,6 @@
 # for full license information.
 # ==============================================================================
 
-from __future__ import print_function
 import numpy as np
 import sys
 import os
@@ -44,12 +43,12 @@ def convnet_cifar10(debug_output=False):
 
     with cntk.layers.default_options(activation=cntk.ops.relu, pad=True): 
         z = cntk.models.Sequential([
-            cntk.models.For(range(2), lambda : [
-                cntk.layers.Convolution2D((3,3), 64), 
-                cntk.layers.Convolution2D((3,3), 64), 
+            cntk.models.LayerStack(2, lambda : [
+                cntk.layers.Convolution((3,3), 64), 
+                cntk.layers.Convolution((3,3), 64), 
                 cntk.layers.MaxPooling((3,3), (2,2))
             ]), 
-            cntk.models.For(range(2), lambda i: [
+            cntk.models.LayerStack(2, lambda i: [
                 cntk.layers.Dense([256,128][i]), 
                 cntk.layers.Dropout(0.5)
             ]), 
@@ -73,9 +72,8 @@ def convnet_cifar10(debug_output=False):
     l2_reg_weight          = 0.002
 
     # Instantiate the trainer object to drive the model training
-    learner = cntk.learner.momentum_sgd(z.parameters, lr_schedule, mm_schedule,
-                                        l2_regularization_weight = l2_reg_weight)
-    trainer = cntk.Trainer(z, (ce, pe), learner)
+    learner = cntk.learner.momentum_sgd(z.parameters, lr_schedule, mm_schedule, l2_regularization_weight = l2_reg_weight)
+    trainer = cntk.Trainer(z, ce, pe, learner)
 
     # define mapping from reader streams to network inputs
     input_map = {
@@ -97,7 +95,7 @@ def convnet_cifar10(debug_output=False):
             progress_printer.update_with_trainer(trainer, with_metric=True) # log progress
 
         progress_printer.epoch_summary(with_metric=True)
-        z.save(os.path.join(model_path, "ConvNet_CIFAR10_{}.dnn".format(epoch)))
+        z.save_model(os.path.join(model_path, "ConvNet_CIFAR10_{}.dnn".format(epoch)))
     
     # Load test data
     reader_test = create_reader(os.path.join(data_path, 'Test_cntk_text.txt'), False, input_dim, num_output_classes)

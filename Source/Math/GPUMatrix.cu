@@ -1270,7 +1270,7 @@ void GPUMatrix<ElemType>::SetDiagonalValue(const GPUMatrix<ElemType>& vector)
     if (vector.GetNumElements() == 1) // reduce to simple form
         SetDiagonalValue(vector.Data()[0]);
 
-    else if (vector.GetNumRows() != GetNumRows() && vector.GetNumCols() != GetNumRows())
+    else if (vector.GetNumRows() != GetNumRows())
         LogicError("SetDiagonalValue: input vector's dimension does not agree with [this].");
     else
     {
@@ -1394,8 +1394,7 @@ void GPUMatrix<ElemType>::FSAdagrad(GPUMatrix<ElemType>& gradients,
                                     ElemType learnRatePerSample,
                                     ElemType momentum,
                                     ElemType adaWeight,
-                                    ElemType adaMul,
-                                    bool unitGainMomentum)
+                                    ElemType adaMul)
 {
     size_t numColsNeeded = 2 * gradients.GetNumCols();
 
@@ -1410,32 +1409,7 @@ void GPUMatrix<ElemType>::FSAdagrad(GPUMatrix<ElemType>& gradients,
     size_t n = gradients.GetNumElements();
     int blocksPerGrid = (n + GridDim::maxThreadsPerBlock - 1) / GridDim::maxThreadsPerBlock;
     _fsadagrad<ElemType><<<blocksPerGrid, GridDim::maxThreadsPerBlock>>>(n, gradients.Data(), Data(), Data()+ n, functionValues.Data(),
-                                                                         learnRatePerSample, momentum, adaWeight, adaMul, unitGainMomentum);
-}
-
-template <class ElemType>
-void GPUMatrix<ElemType>::Adam(GPUMatrix<ElemType>& gradients,
-    GPUMatrix<ElemType>& functionValues,
-    ElemType learnRatePerSample,
-    ElemType momentum,
-    ElemType adaWeight,
-    ElemType adaMul,
-    bool unitGainMomentum)
-{
-    size_t numColsNeeded = 2 * gradients.GetNumCols();
-
-    if (IsEmpty() || (GetNumCols() < numColsNeeded))
-    {
-        RequireSize(gradients.GetNumRows(), numColsNeeded);
-        SetValue(0.0);
-    }
-
-    assert((GetNumRows() == gradients.GetNumRows()) && (GetNumCols() == numColsNeeded));
-
-    size_t n = gradients.GetNumElements();
-    int blocksPerGrid = (n + GridDim::maxThreadsPerBlock - 1) / GridDim::maxThreadsPerBlock;
-    _adam<ElemType> << <blocksPerGrid, GridDim::maxThreadsPerBlock >> >(n, gradients.Data(), Data(), Data() + n, functionValues.Data(),
-        learnRatePerSample, momentum, adaWeight, adaMul, unitGainMomentum);
+                                                                         learnRatePerSample, momentum, adaWeight, adaMul);
 }
 
 template <class ElemType>
@@ -1550,15 +1524,6 @@ void GPUMatrix<ElemType>::Resize(const size_t numRows, const size_t numCols, boo
     if (numElements > GetSizeAllocated() ||                     // grow allocation
         (isForceResize && numElements != GetSizeAllocated()))   // shrink allocation if not growOnly
     {
-        // If the buffer exists, free it before allocate
-        if (Buffer())
-        {
-            if (cachedResize)
-                BufferManagement::GetManagerInstance(GetComputeDeviceId()).LogicalReleaseBuffer<ElemType>(Buffer(), GetSizeAllocated());
-            else
-                TracingGPUMemoryAllocator::Free<ElemType>(GetComputeDeviceId(), Buffer());
-        }
-
         // reallocate buffer if numElements > 0
         ElemType* pArray = nullptr;
         if (numElements > 0)
@@ -1567,6 +1532,15 @@ void GPUMatrix<ElemType>::Resize(const size_t numRows, const size_t numCols, boo
                 pArray = BufferManagement::GetManagerInstance(GetComputeDeviceId()).RequestBuffer<ElemType>(numElements);
             else
                 pArray = TracingGPUMemoryAllocator::Allocate<ElemType>(GetComputeDeviceId(), numRows, numCols);
+        }
+
+        // If the buffer exists, free it
+        if (Buffer())
+        {
+            if(cachedResize)
+                BufferManagement::GetManagerInstance(GetComputeDeviceId()).LogicalReleaseBuffer<ElemType>(Buffer(), GetSizeAllocated());
+            else
+                TracingGPUMemoryAllocator::Free<ElemType>(GetComputeDeviceId(), Buffer());
         }
 
         SetBuffer(pArray, numElements * sizeof(ElemType));
@@ -3396,16 +3370,15 @@ void GPUMatrix<ElemType>::MultiplyAndWeightedAdd(ElemType alpha, const GPUMatrix
     int k = int(transposeA ? a.m_numRows : a.m_numCols);
     int l = int(transposeB ? b.m_numCols : b.m_numRows);
 
-    if (beta == 0)
-        c.RequireSize(m, n);
-    else
-        c.VerifySize(m, n); // Can't resize if beta != 0
+    c.RequireSize(m, n);
 
     if (!(m > 0 && k > 0 && l > 0 && n > 0))
         RuntimeError("!(m>0 && k>0 && l>0 && n>0)"); // converting from size_t to int may cause overflow
     if (k != l)
         RuntimeError("matrix dim mismatch in MultiplyAndWeightedAdd");
     CUBLAS_CALL(cublas_gemm(cuHandle, transA, transB, m, n, k, &alpha, a.Data(), (int) a.m_numRows, b.Data(), (int) b.m_numRows, &beta, c.Data(), (int) c.m_numRows));
+    c.m_numRows = m;
+    c.m_numCols = n;
 }
 
 template <class ElemType>
@@ -3873,7 +3846,7 @@ void GPUMatrix<ElemType>::InnerProduct(const GPUMatrix<ElemType>& a, const GPUMa
     else
         c.RequireSize(m, 1);
 
-    if ((isColWise && m == 1) || (!isColWise && n == 1)) // in this case it's equivalent to element-wise product
+    if ((isColWise && m == 1) || !isColWise && n == 1) // in this case it's equivalent to element-wise product
     {
         c.AssignElementProductOf(a, b);
     }
@@ -4489,8 +4462,7 @@ void GPUMatrix<ElemType>::TensorOp(ElemType beta, const GPUMatrix<ElemType>& a, 
     if (reductionOp != ElementWiseOperator::opSum    &&
         reductionOp != ElementWiseOperator::opLogSum &&
         reductionOp != ElementWiseOperator::opMin    &&
-        reductionOp != ElementWiseOperator::opMax    &&
-        reductionOp != ElementWiseOperator::opElementwiseProduct)
+        reductionOp != ElementWiseOperator::opMax)
         InvalidArgument("TensorOp: Unary reduction operations other than opMax, opMin, opSum, and opLogSum are not implemented.");
 
     a.PrepareDevice();

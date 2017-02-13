@@ -3,7 +3,7 @@
 # for full license information.
 # ==============================================================================
 
-from ...utils import sanitize_input, get_data_type, typemap
+from ...utils import sanitize_input, sanitize_shape, get_data_type, typemap
 
 ##########################################################################
 # sequence ops
@@ -19,8 +19,7 @@ def is_first(seq, name=''):
     Example:
         >>> x = C.input_variable(shape=(3,2))
         >>> y = C.sequence.is_first(x)
-        >>> # create one sequence of 4 tensors each with shape (3,2)
-        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(1,4,3,2))
+        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(4,3,2))
         >>> y.eval({x:x0})
         array([[ 1.,  0.,  0.,  0.]], dtype=float32)
 
@@ -45,8 +44,7 @@ def is_last(seq, name=''):
     Example:
         >>> x = C.input_variable(shape=(3,2))
         >>> y = C.sequence.is_last(x)
-        >>> # create one sequence of 4 tensors each with shape (3,2)
-        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(1,4,3,2))
+        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(4,3,2))
         >>> y.eval({x:x0})
         array([[ 0.,  0.,  0.,  1.]], dtype=float32)
 
@@ -92,8 +90,7 @@ def first(seq, name=''):
     Example:
         >>> x = C.input_variable(shape=(3,2))
         >>> y = C.sequence.first(x)
-        >>> # create one sequence of 4 tensors each with shape (3,2)
-        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(1,4,3,2))
+        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(4,3,2))
         >>> y.eval({x:x0})
         array([[[[ 0.,  1.],
                  [ 2.,  3.],
@@ -118,8 +115,7 @@ def last(seq, name=''):
     Example:
         >>> x = C.input_variable(shape=(3,2))
         >>> y = C.sequence.last(x)
-        >>> # create one sequence of 4 tensors each with shape (3,2)
-        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(1,4,3,2))
+        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(4,3,2))
         >>> y.eval({x:x0})
         array([[[[ 18.,  19.],
                  [ 20.,  21.],
@@ -146,17 +142,12 @@ def where(condition, name=''):
     Example:
         >>> x = C.input_variable(shape=(3,2))
         >>> z = C.greater(C.reduce_sum(x), 60)
-        >>> # create one sequence of 4 tensors each with shape (3,2)
-        >>> x0 = np.reshape(np.arange(24.0, dtype=np.float32), (1,4,3,2))
-        >>> z.eval({x:x0})
-        array([[[ 0.],
-                [ 0.],
-                [ 1.],
-                [ 1.]]], dtype=float32)
+        >>> x0 = np.reshape(np.arange(24.0, dtype=np.float32), (4,3,2))
+        >>> z.eval({x:x0}).flatten()
+        array([ 0.,  0.,  1.,  1.], dtype=float32)
         >>> y = C.sequence.where(z)
-        >>> y.eval({x:x0})
-        array([[[ 2.],
-                [ 3.]]], dtype=float32)
+        >>> y.eval({x:x0}).flatten()
+        array([ 2.,  3.], dtype=float32)
 
     Args:
         condition: the symbolic sequence of booleans
@@ -170,7 +161,7 @@ def where(condition, name=''):
     return where(condition, name)
 
 @typemap
-def gather(seq, condition, new_sequence_axis_typeinfo=None, name=''):
+def gather(seq, condition, name=''):
     '''
     Takes two sequences of the same length and returns a new sequence whose
     elements are those elements of sequence ``seq`` whose corresponding element
@@ -182,8 +173,7 @@ def gather(seq, condition, new_sequence_axis_typeinfo=None, name=''):
         >>> x = C.input_variable(shape=(3,2))
         >>> z = C.greater(C.reduce_sum(x),60)
         >>> y = C.sequence.gather(x,z)
-        >>> # create one sequence of 4 tensors each with shape (3,2)
-        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(1,4,3,2))
+        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(4,3,2))
         >>> y.eval({x:x0})
         array([[[[ 12.,  13.],
                  [ 14.,  15.],
@@ -197,11 +187,6 @@ def gather(seq, condition, new_sequence_axis_typeinfo=None, name=''):
         seq: the symbolic sequence from which elements will be selected
         condition: the symbolic sequence of booleans which indicate which
             elements should be selected
-        new_sequence_axis_typeinfo:  tuple of integers indicating
-            the scaling and additive factors for the length of the new sequence axis
-            w.r.t. the operand sequence. This is used to determine the sequence axis
-            to be used for the output of the gather operation. If this argument is left 
-            unspecified, a new independent sequence axis is created.
         name (str): the name of the node in the network
     Returns:
         :class:`~cntk.ops.functions.Function`
@@ -209,14 +194,11 @@ def gather(seq, condition, new_sequence_axis_typeinfo=None, name=''):
     from cntk.cntk_py import gather
     seq = sanitize_input(seq, get_data_type(seq))
     condition = sanitize_input(condition, get_data_type(condition))
-    if new_sequence_axis_typeinfo is None:
-        return gather(seq, condition, name)
-    else:
-        return gather(seq, condition, new_sequence_axis_typeinfo, name)
+    return gather(seq, condition, name)
 
 
 @typemap
-def scatter(seq, condition, new_sequence_axis_typeinfo=None, name=''):
+def scatter(seq, condition, name=''):
     '''
     Performs the inverse of gather. The sequence ``seq`` must have as many
     elements as the number of True values in the sequence ``condition``.
@@ -230,8 +212,7 @@ def scatter(seq, condition, new_sequence_axis_typeinfo=None, name=''):
         >>> t = C.sequence.last(x)
         >>> b = C.sequence.is_first(x)
         >>> y = C.sequence.scatter(t, b)
-        >>> # create one sequence of 4 tensors each with shape (3,2)
-        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(1,4,3,2))
+        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(4,3,2))
         >>> y.eval({x:x0})
         array([[[[ 18.,  19.],
                  [ 20.,  21.],
@@ -254,11 +235,6 @@ def scatter(seq, condition, new_sequence_axis_typeinfo=None, name=''):
             output
         condition: the symbolic sequence which denotes the locations where
             elements should be copied
-        new_sequence_axis_typeinfo:  tuple of integers indicating
-            the scaling and additive factors for the length of the new sequence axis
-            w.r.t. the condition sequence. This is used to determine the sequence axis
-            to be used for the output of the gather operation. If this argument is left 
-            unspecified a new independent sequence axis is created.
         name (str): the name of the node in the network
     Returns:
         :class:`~cntk.ops.functions.Function`
@@ -266,10 +242,7 @@ def scatter(seq, condition, new_sequence_axis_typeinfo=None, name=''):
     from cntk.cntk_py import scatter
     seq = sanitize_input(seq, get_data_type(seq))
     condition = sanitize_input(condition, get_data_type(condition))
-    if new_sequence_axis_typeinfo is None:
-        return scatter(seq, condition, name)
-    else:
-        return scatter(seq, condition, new_sequence_axis_typeinfo, name)
+    return scatter(seq, condition, name)
 
 
 @typemap
@@ -284,8 +257,7 @@ def broadcast_as(operand, broadcast_as_operand, name=''):
         >>> t = C.sequence.last(x)
         >>> b = C.sequence.is_first(x)
         >>> y = C.sequence.broadcast_as(t, b)
-        >>> # create one sequence of 4 tensors each with shape (3,2)
-        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(1,4,3,2))
+        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(4,3,2))
         >>> y.eval({x:x0})
         array([[[[ 18.,  19.],
                  [ 20.,  21.],
@@ -324,15 +296,7 @@ def reduce_sum(seq, name=''):
     Computes the sum of the input sequence's elements across the sequence axis.
 
     Examples:
-        >>> x = C.input_variable(shape=(3,2))
-        >>> # create one sequence of 4 tensors each with shape (3,2)
-        >>> x0 = np.reshape(np.arange(24.0,dtype=np.float32),(1,4,3,2))
-        >>> y = C.sequence.reduce_sum(x)
-        >>> y.eval({x:x0})
-        array([[[[ 36.,  40.],
-                 [ 44.,  48.],
-                 [ 52.,  56.]]]], dtype=float32)
-
+        TBA
     Args:
         seq: sequence input tensor
         name (`str`, optional): the name of the Function instance in the network

@@ -16,17 +16,17 @@ namespace CNTK
     class CNTKBackPropState final : public BackPropState
     {
     public:
-        CNTKBackPropState(const FunctionPtr& function, const DeviceDescriptor& computeDevice, const std::unordered_map<Variable, uint64_t>& backpropRootsForwardTimeStamps)
+        CNTKBackPropState(const FunctionPtr& function, const DeviceDescriptor& computeDevice, const std::unordered_map<Variable, int64_t>& backpropRootsForwardTimeStamps)
             : BackPropState(function, computeDevice), m_backpropRootsForwardTimeStamps(backpropRootsForwardTimeStamps)
         {}
 
-        const std::unordered_map<Variable, uint64_t>& BackpropRootsForwardTimeStamps() const
+        const std::unordered_map<Variable, int64_t>& BackpropRootsForwardTimeStamps() const
         {
             return m_backpropRootsForwardTimeStamps; 
         }
 
     private:
-        std::unordered_map<Variable, uint64_t> m_backpropRootsForwardTimeStamps;
+        std::unordered_map<Variable, int64_t> m_backpropRootsForwardTimeStamps;
     };
     typedef std::shared_ptr<CNTKBackPropState> CNTKBackPropStatePtr;
 
@@ -64,55 +64,28 @@ namespace CNTK
         }
 
     public:
-        static CompositeFunctionPtr Create(const FunctionPtr& rootFunction, const std::wstring& name = L"", const std::wstring& uid = Internal::GenerateUid(L"CompositeFunction"))
+        static CompositeFunctionPtr Create(const FunctionPtr& rootFunction, const std::wstring& name = L"", const std::wstring& uid = L"")
         {
             std::unordered_set<FunctionPtr> visitedFunctions;
 
             // Call Collect to get the set of all functions in the graph
             Collect(rootFunction, visitedFunctions);
 
-            auto composite = MakeSharedObject<CompositeFunction>(rootFunction, std::move(visitedFunctions), name, uid);
-
-            // Initialize the outputs
-            composite->InitOutputs();
-
-            return composite;
+            return MakeSharedObject<CompositeFunction>(rootFunction, std::move(visitedFunctions), name, uid);
         }
 
-        BackPropStatePtr Forward(const std::unordered_map<Variable, ValuePtr>& arguments,
-                                 std::unordered_map<Variable, ValuePtr>& outputs,
-                                 const DeviceDescriptor& computeDevice,
-                                 const std::unordered_set<Variable>& outputsToRetainBackwardStateFor,
-                                 const std::unordered_set<Variable>& inputsToExcludeGradientsFor);
-
-        virtual BackPropStatePtr Forward(const std::vector<ValuePtr>& /*inputValues*/,
-                                         std::unordered_map<Variable, ValuePtr>& /*outputs*/,
-                                         const DeviceDescriptor& /*computeDevice*/,
-                                         const std::unordered_set<Variable>& /*outputsToRetainBackwardStateFor*/) override
-        {
-            NOT_IMPLEMENTED;
-        }
-
-        void InferOutputs(std::vector<Variable>& outputs) override
-        {
-            auto& inferred = m_rootFunction->InitOutputs();
-            outputs.assign(inferred.begin(), inferred.end());
-        }
+        virtual BackPropStatePtr Forward(const std::unordered_map<Variable, ValuePtr>& arguments,
+                                         std::unordered_map<Variable, ValuePtr>& outputs,
+                                         const DeviceDescriptor& computeDevice,
+                                         const std::unordered_set<Variable>& outputsToRetainBackwardStateFor) override;
 
         virtual void Backward(const BackPropStatePtr& state,
                               const std::unordered_map<Variable, ValuePtr>& rootGradientValues,
                               std::unordered_map<Variable, ValuePtr>& backPropagatedGradientValuesForInputs) override;
 
-        Dictionary SerializeBlockComposite() const;
-
         virtual Dictionary Serialize() const override;
-        
-        virtual size_t CurrentVersion() const override { return s_serializationVersion; }
 
-        static FunctionPtr DeserializeBlockComposite(const Dictionary& dict,
-                                                     const std::unordered_set<FunctionPtr>& allPrimitiveFunctions,
-                                                     const std::unordered_map<Variable, Variable>& allPlaceholderReplacements,
-                                                     const CNTK::DeviceDescriptor& device);
+        virtual size_t CurrentVersion() const override { return s_serializationVersion; }
 
         static FunctionPtr Deserialize(const Dictionary& dictionary, const CNTK::DeviceDescriptor& device);
 
@@ -122,88 +95,71 @@ namespace CNTK
         }
 
         template <typename FunctionType>
-        static void PreorderTraverseVariables(const FunctionPtr& rootFunction, const FunctionType& functor, bool pythonOperandOrder = false)
+        static void Traverse(const FunctionPtr& rootFunction, const FunctionType& functor)
         {
             std::unordered_set<FunctionPtr> visitedFunctions;
-            PreorderTraverseVariables(rootFunction, visitedFunctions, functor, pythonOperandOrder);
+            Traverse(rootFunction, visitedFunctions, functor);
         }
 
         // Recursively traverses the Function graph underlying the 'rootFunction' invoking the provided functor for all visited nodes in the graph.
         template <typename FunctionType>
-        static void PreorderTraverseVariables(const FunctionPtr& rootFunction, std::unordered_set<FunctionPtr>& visitedFunctions, const FunctionType& functor, bool pythonOperandOrder = false)
+        static void Traverse(const FunctionPtr& rootFunction, std::unordered_set<FunctionPtr>& visitedFunctions, const FunctionType& functor)
         {
             visitedFunctions.insert(rootFunction);
-            auto rootFunctionOutputs = rootFunction->InitOutputs();
-            for (const auto& rootOutput : rootFunctionOutputs)
-                functor(rootOutput);
+            functor(rootFunction);
 
-            auto rootFunctionInputs = rootFunction->Inputs(pythonOperandOrder);
+            std::vector<Variable> rootFunctionInputs = rootFunction->Inputs();
             for (const auto& rootInput : rootFunctionInputs)
             {
-                functor(rootInput);
                 if (rootInput.IsOutput() && visitedFunctions.find(rootInput.Owner()) == visitedFunctions.end())
                 {
                     const auto& function = rootInput.Owner();
-                    PreorderTraverseVariables(function, visitedFunctions, functor, pythonOperandOrder);
+                    Traverse(function, visitedFunctions, functor);
                 }
             }
         }
 
     private:
-        // Replace any PlaceHolder Variables in the graph of Functions underlying 'this' CompositeFunction. All PlaceHolder variables
-        // should have been replaced before performing any Forward compute of 'this' Function.
-        virtual void OnPlaceholdersReplaced(const std::unordered_map<Variable, Variable>& placeholderReplacements,
-                                            std::unordered_set<Variable>& replacedPlaceholders) override
-        {
-            // If any of the placeholders were replaced with Output variables, let's add the graph of function underneath 
-            // each of those to 'm_allPrimitiveFunctions' set
-            for (auto replacedPlaceholder : replacedPlaceholders)
-            {
-                auto replacingVariable = placeholderReplacements.at(replacedPlaceholder);
-                if (replacingVariable.IsOutput())
-                {
-                    auto ownerFunc = replacingVariable.Owner();
-                    std::unordered_set<FunctionPtr> visitedFunctions2;
-                    Collect(ownerFunc, visitedFunctions2);
-
-                    // Add the newly visited functions to 'm_allPrimitiveFunctions' set
-                    m_allPrimitiveFunctions.insert(visitedFunctions2.begin(), visitedFunctions2.end());
-                }
-            }
-        }
+        virtual void ReplacePlaceholdersInPlace(const std::unordered_map<Variable, Variable>& placeholderReplacements,
+                                                std::unordered_set<const Function*>& visitedFunctions,
+                                                std::unordered_set<Variable>& replacedPlaceholders) override;
 
         CompositeFunction(const FunctionPtr& rootFunction, std::unordered_set<FunctionPtr>&& allPrimitiveFunctions, const std::wstring& name, const std::wstring& uid = Internal::GenerateUid(L"CompositeFunction"))
-            : Function({}, Dictionary(), rootFunction, name, uid),
+            : Function({}, rootFunction->Outputs(), Dictionary(), rootFunction, name, uid),
             m_allPrimitiveFunctions(std::move(allPrimitiveFunctions)), m_networkMatricesAllocated(false)
         {}
 
-        std::vector<Variable> DetermineInputs(bool pythonOperandOrder = false) const
+        std::vector<Variable> DetermineInputs() const
         {
             const auto& root = RootFunction();
             std::unordered_set<FunctionPtr> visitedFunctions;
-            return DetermineInputs(root, visitedFunctions, pythonOperandOrder);
+            return DetermineInputs(root, visitedFunctions);
         }
 
          // Recursively traverses the Function graph and populates the provided set of functions.
         static void Collect(const FunctionPtr& rootFunction, std::unordered_set<FunctionPtr>& functions)
         {
             // Call Traverse to get the set of all functions in the graph
-            PreorderTraverseFunctions(rootFunction, functions, [](const FunctionPtr& f){});
+            Traverse(rootFunction, functions, [](const FunctionPtr& f){});
         }
 
         // Recursively traverses the Function graph underlying the 'rootFunction' to determine all the leaves (aka inputs) of the graph
-        static std::vector<Variable> DetermineInputs(const FunctionPtr& rootFunction, std::unordered_set<FunctionPtr>& visitedFunctions, bool pythonOperandOrder = false)
+        static std::vector<Variable> DetermineInputs(const FunctionPtr& rootFunction, std::unordered_set<FunctionPtr>& visitedFunctions)
         {
             vector<FunctionPtr> functions;
             std::vector<Variable> inputs;
             std::unordered_set<Variable> uniqueInputs;
-            PreorderTraverseVariables(rootFunction, visitedFunctions, [&inputs, &uniqueInputs](const Variable& var) {
-                if (!var.IsOutput() && uniqueInputs.find(var) == uniqueInputs.end())
+            Traverse(rootFunction, visitedFunctions, [&inputs, &uniqueInputs](const FunctionPtr& f) { 
+                std::vector<Variable> functionInputs = f->Inputs();
+                for (auto input : functionInputs)
                 {
-                    inputs.push_back(var);
-                    uniqueInputs.insert(var);
+                    if (!input.IsOutput() && uniqueInputs.find(input) == uniqueInputs.end()) 
+                    {
+                        inputs.push_back(input);
+                        uniqueInputs.insert(input);
+                    }
                 }
-           }, pythonOperandOrder);
+            });
 
             return inputs;
         }
@@ -214,14 +170,10 @@ namespace CNTK
         // Copy state info from source function graph into' this' function graph.
         void CopyState(const CompositeFunction& source);
 
-        static Variable GetMappingForNoOpOutput(const Variable& variable, bool recursive = false);
-        static Variable GetMappingVariable(const Variable& variable, bool recursive = false);
-
         template <typename ElementType>
         Microsoft::MSR::CNTK::ComputationNetworkPtr GetComputationNetwork(const DeviceDescriptor& device,
                                                                           const std::unordered_set<Variable>& backpropRoots,
                                                                           const std::unordered_set<Variable>& outputs,
-                                                                          const std::unordered_set<Variable>& inputsToExcludeGradientsFor,
                                                                           bool allocateNetworkMatrices);
 
         template <typename ElementType>
@@ -236,18 +188,16 @@ namespace CNTK
                                                                                   Microsoft::MSR::CNTK::ComputationNetworkPtr& network,
                                                                                   Microsoft::MSR::CNTK::ComputationNetworkBuilder<ElementType>& builder,
                                                                                   std::unordered_map<Variable, Microsoft::MSR::CNTK::ComputationNodeBasePtr>& variableToNodeMap,
-                                                                                  std::unordered_map<Variable, bool>& isVariableRootMap,
-                                                                                  const std::unordered_set<Variable>& inputsToExcludeGradientsFor);
+                                                                                  std::unordered_map<Variable, bool>& isVariableRootMap);
 
         template <typename ElementType>
         static Microsoft::MSR::CNTK::ComputationNodeBasePtr GetNode(const Variable& variable, Microsoft::MSR::CNTK::ComputationNetworkPtr& network,
                                                                     Microsoft::MSR::CNTK::ComputationNetworkBuilder<ElementType>& builder,
                                                                     std::unordered_map<Variable, Microsoft::MSR::CNTK::ComputationNodeBasePtr>& variableToNodeMap,
-                                                                    std::unordered_map<Variable, bool>& isVariableRootMap,
-                                                                    const std::unordered_set<Variable>& inputsToExcludeGradientsFor);
+                                                                    std::unordered_map<Variable, bool>& isVariableRootMap);
 
         template <typename ElementType>
-        static void PopulateComputationNodeValue(const std::pair<Variable, ValuePtr>& variableValue, Microsoft::MSR::CNTK::ComputationNodeBasePtr& computationNode, std::unordered_map< Microsoft::MSR::CNTK::MBLayoutPtr, Variable>& layoutsPopulated);
+        static void PopulateComputationNodeValue(const std::pair<Variable, ValuePtr>& variableValue, Microsoft::MSR::CNTK::ComputationNodeBasePtr& computationNode);
         void PopulateNetworkInputs(const std::unordered_map<Variable, ValuePtr>& arguments);
 
         template <typename ElementType>
@@ -260,7 +210,7 @@ namespace CNTK
 
         const std::vector<Variable>& GetArgumentDependencies(const Variable& output);
 
-        std::unordered_map<Variable, uint64_t> GetCurrentBackpropRootsTimeStamps() const;
+        std::unordered_map<Variable, int64_t> GetCurrentBackpropRootsTimeStamps() const;
 
     private:
 
@@ -282,19 +232,49 @@ namespace CNTK
         // the next 'Backward' call.
         std::unordered_set<Variable> m_currentBackpropRoots;
 
+        // The outputs specified in the most recent 'Forward' call on 'this' Function/
+        // This indicates which outputs has the memory sharing structure of the cached
+        // computation network object being setup for. Asking for outputs in subsequent
+        // 'Forward' calls that do not belong to the current set required redoing the 
+        // network memory sharing structure.
+        std::unordered_set<Variable> m_currentOutputs;
+
         std::unordered_map<Variable, std::vector<Variable>> m_perOutputVarArgumentDependencies;
 
         bool m_networkMatricesAllocated;
 
-        std::vector<Microsoft::MSR::CNTK::ComputationNodeBasePtr> m_allNetworkRootsInGlobalEvalOrder;
-
         std::unordered_map<Parameter, size_t> m_lastRecordedParameterValueTimeStamps;
-
-        std::unordered_set<Variable> m_inputsExcludedFromGradientComputation;
 
         // Version history:
         // 1 -- initial version.
         // 2 -- add support for stateful functions (with corresponding nodes inheriting from RngUser).
         static const size_t s_serializationVersion = 2;
     };
+
+    inline std::vector<CNTK::Axis> DynamicAxesFromInternalDynamicAxisName(const std::wstring& internalDynamicAxisName)
+    {
+        std::vector<CNTK::Axis> inputVarDynamicAxes;
+        if (internalDynamicAxisName.substr(0, CNTK::CompositeFunction::InternalDefaultDynamicAxisName.length()) == CNTK::CompositeFunction::InternalDefaultDynamicAxisName)
+            inputVarDynamicAxes = { CNTK::Axis::DefaultDynamicAxis(), CNTK::Axis::DefaultBatchAxis() };
+        else if (internalDynamicAxisName.substr(0, CNTK::CompositeFunction::InternalNoSequenceAxisName.length()) == CNTK::CompositeFunction::InternalNoSequenceAxisName)
+            inputVarDynamicAxes = { CNTK::Axis::DefaultBatchAxis() };
+        else
+            inputVarDynamicAxes = { CNTK::Axis(internalDynamicAxisName), CNTK::Axis::DefaultBatchAxis() };
+
+        return inputVarDynamicAxes;
+    }
+
+    // Construct the dynamic axis name to be used internally for the CNTK InputNodes
+    inline std::wstring InternalDynamicAxisNameFromDynamicAxes(const std::vector<Axis>& dynamicAxes)
+    {
+        if (dynamicAxes.empty())
+            LogicError("Empty dynamic axes set");
+
+        if (dynamicAxes == std::vector<Axis>({ Axis::DefaultBatchAxis() }))
+            return CompositeFunction::InternalNoSequenceAxisName;
+        else if (dynamicAxes == std::vector<Axis>({ Axis::DefaultDynamicAxis(), Axis::DefaultBatchAxis() }))
+            return CompositeFunction::InternalDefaultDynamicAxisName;
+        else
+            return dynamicAxes[0].Name();
+    }
 }

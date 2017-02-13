@@ -16,14 +16,14 @@ subdirs = ['positive', 'testImages']
 overlaps = []
 roiCounts = []
 for subdir in subdirs:
-    imgFilenames = getFilesInDirectory(os.path.join(imgDir, subdir), ".jpg")
+    imgFilenames = getFilesInDirectory(imgDir + subdir, ".jpg")
 
     # loop over all iamges
     for imgIndex,imgFilename in enumerate(imgFilenames):
         if imgIndex % 20 == 0:
             print ("Processing subdir '{}', image {} of {}".format(subdir, imgIndex, len(imgFilenames)))
         # load ground truth
-        imgPath = os.path.join(imgDir, subdir, imgFilename)
+        imgPath = imgDir + subdir + "/" + imgFilename
         imgWidth, imgHeight = imWidthHeight(imgPath)
         gtBoxes, gtLabels = readGtAnnotation(imgPath)
         gtBoxes = [Bbox(*rect) for rect in gtBoxes]

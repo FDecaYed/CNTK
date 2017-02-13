@@ -16,7 +16,7 @@ from cntk.ops import input_variable, cross_entropy_with_softmax, classification_
 from cntk.ops.functions import CloneMethod
 
 abs_path = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(abs_path, "..", "..", "..", "common"))
+sys.path.append(os.path.join(abs_path, "..", "..", "..", "..", "Examples", "common"))
 from nn import LSTMP_component_with_self_stabilization, stabilize, linear_layer, print_training_progress
 
 # Given a vocab and tensor, print the output
@@ -157,10 +157,10 @@ def sequence_to_sequence_translator(debug_output=False, run_test=False):
     clipping_threshold_per_sample = 2.3
     gradient_clipping_with_truncation = True
     learner = momentum_sgd(z.parameters, 
-                           lr_per_minibatch, momentum_time_constant,
+                           lr_per_minibatch, momentum_time_constant, 
                            gradient_clipping_threshold_per_sample=clipping_threshold_per_sample, 
                            gradient_clipping_with_truncation=gradient_clipping_with_truncation)
-    trainer = Trainer(z, (ce, errs), learner)
+    trainer = Trainer(z, ce, errs, learner)
 
     # setup data
     train_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Data", "cmudict-0.7b.train-dev-20-21.ctf")
@@ -233,16 +233,15 @@ def sequence_to_sequence_translator(debug_output=False, run_test=False):
 
     error1 = translator_test_error(z, trainer, input_vocab_dim, label_vocab_dim)
 
-    z.save("seq2seq.dnn")
-    z.restore("seq2seq.dnn")
+    z.save_model("seq2seq.dnn")
+    z.restore_model("seq2seq.dnn")
 
     label_seq_axis = Axis('labelAxis')
     label_sequence = sequence.slice(find_arg_by_name('raw_labels',z), 1, 0)
     ce = cross_entropy_with_softmax(z, label_sequence)
     errs = classification_error(z, label_sequence)
-    trainer = Trainer(z, (ce, errs), [momentum_sgd(
-                    z.parameters, lr_per_minibatch, momentum_time_constant, True,
-                    clipping_threshold_per_sample, gradient_clipping_with_truncation)])
+    trainer = Trainer(z, ce, errs, [momentum_sgd(
+                    z.parameters, lr_per_minibatch, momentum_time_constant, clipping_threshold_per_sample, gradient_clipping_with_truncation)])
 
     error2 = translator_test_error(z, trainer, input_vocab_dim, label_vocab_dim)
 

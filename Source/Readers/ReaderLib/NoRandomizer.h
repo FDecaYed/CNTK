@@ -8,7 +8,6 @@
 #include <vector>
 #include "SequenceEnumerator.h"
 #include "DataDeserializer.h"
-#include "ReaderUtil.h"
 
 namespace Microsoft { namespace MSR { namespace CNTK {
 
@@ -19,13 +18,10 @@ namespace Microsoft { namespace MSR { namespace CNTK {
 class NoRandomizer : public SequenceEnumerator
 {
 public:
-    NoRandomizer(
-        IDataDeserializerPtr deserializer, 
-        bool multithreadedGetNextSequences = false,
-        size_t maxNumberOfInvalidSequences = 0); // per worker
+    NoRandomizer(IDataDeserializerPtr deserializer, bool multithreadedGetNextSequences = false);
 
     virtual void StartEpoch(const EpochConfiguration& config) override;
-    virtual Sequences GetNextSequences(size_t globalSampleCount, size_t localSampleCount) override;
+    virtual Sequences GetNextSequences(size_t sampleCount) override;
     virtual std::vector<StreamDescriptionPtr> GetStreamDescriptions() const override
     {
         return m_deserializer->GetStreamDescriptions();
@@ -37,8 +33,8 @@ public:
     void SetConfiguration(const ReaderConfiguration& config) override;
 
 private:
-    // Gets next sequences not exceeding localSampleCount for this worker and globalSampleCount across workers.
-    void GetNextSequenceDescriptions(size_t globalSampleCount, size_t localSampleCount, std::vector<SequenceDescription>& result);
+    // Gets next sequence descriptions with total size less than sampleCount.
+    std::vector<SequenceDescription> GetNextSequenceDescriptions(size_t sampleCount);
 
     // Get chunk index for the sample offset from the beginning of the sweep.
     ChunkIdType GetChunkIndexOf(size_t samplePosition);
@@ -49,7 +45,7 @@ private:
     IDataDeserializerPtr m_deserializer;
 
     // Whether to get sequences using multiple thread.
-    // Useful in case deserializer performs CPU intensive deserialization (e.g. decompression)
+    // TODO temporary; should go away when transformers are moved closer to the deserializer
     bool m_multithreadedGetNextSequences;
 
     // Stream descriptions
@@ -82,19 +78,11 @@ private:
     ChunkIdType m_currentChunkPosition;
 
     // Global sample position on the timeline.
+    // TODO: possible recalculate it base on samplePositionInEpoch.
     size_t m_globalSamplePosition;
 
-    // Used for decimation.
-    size_t m_globalSequencePosition;
-
     // Total number of samples in the sweep.
-    size_t m_sweepSizeInSamples;
-
-    // Temp buffer to avoid allocations.
-    std::vector<SequenceDescription> m_sequenceBuffer;
-
-    // Helper class for removing invalid sequences.
-    SequenceCleaner m_cleaner;
+    size_t m_totalNumberOfSamples;
 };
 
 }}}

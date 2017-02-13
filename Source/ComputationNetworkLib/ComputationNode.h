@@ -46,11 +46,7 @@
 #define CNTK_MODEL_VERSION_14 14 // axis parameter in OptimizedRNNStackNode
 #define CNTK_MODEL_VERSION_15 15 // add new nodes: LambdaRankNode and NDCG1Eval
 #define CNTK_MODEL_VERSION_16 16 // save/load rng state for Dropout and RandomSample nodes.
-#define CNTK_MODEL_VERSION_17 17 // use 8 bytes for rng seeds on both platforms
-#define CNTK_MODEL_VERSION_18 18 // reserving 18 for dilated convolution, write out one more TensorShape 
-#define CNTK_MODEL_VERSION_19 19 // batch norm: add an input parameter to store running mean sample count.
-#define CURRENT_CNTK_MODEL_VERSION CNTK_MODEL_VERSION_19
-
+#define CURRENT_CNTK_MODEL_VERSION CNTK_MODEL_VERSION_16
 
 // helper mode for debugging
 // If TRACK_GAP_NANS is defined then initialize layout gaps to NaN and do NaN checks. Also do detailed logging of node computations.
@@ -254,7 +250,7 @@ public:
     {
         m_evalTimeStamp = 0;
     }
-    uint64_t GetEvalTimeStamp() const
+    int64_t GetEvalTimeStamp() const
     {
         return m_evalTimeStamp;
     }
@@ -267,17 +263,18 @@ public:
 
     bool IsOlderThan(const TimeStamp& other) const
     {
-        return GetEvalTimeStamp() < other.GetEvalTimeStamp();
+        // the difference is taken to take into account numeric overflow (which really should never happen for a 64-bit integer... but hey, it's free!)
+        return GetEvalTimeStamp() - other.GetEvalTimeStamp() < 0;
     }
 
-    uint64_t CreateUniqId() const
+    int64_t CreateUniqId() const
     {
         return ++s_timeStampCounter;
     }
 
 private:
     static atomic_ullong s_timeStampCounter;
-    uint64_t m_evalTimeStamp; // this is used to reduce unnecessary recomputation when a different node in the model is reevaluated
+    int64_t m_evalTimeStamp; // this is used to reduce unnecessary recomputation when a different node in the model is reevaluated
 };
 
 // =======================================================================
@@ -377,7 +374,7 @@ public:
             RpcStringFreeW((RPC_WSTR*) &szUuid);
         }
 #else
-        uint64_t id = CreateUniqId();
+        int64_t id = CreateUniqId();
         std::wstring base = L"AutoName";
         std::wstringstream sstm;
         sstm << base.c_str() << id;
@@ -1599,8 +1596,8 @@ protected:
         DetermineDataSize(rows, cols);
         try
         {
-            m.VerifySize(rows, cols);
-        }
+        m.VerifySize(rows, cols);
+    }
         catch (const std::exception& e)
         {
             Rethrow(e);
@@ -1672,37 +1669,12 @@ public:
         }
     }
 
-    virtual void /*IComputationNode::*/BeginBackprop() override
-    {
-        Base::BeginBackprop();
-
-        if (NeedsGradient())
+#if 0   // (keep it around in case we need to add stuff in the future)
+        virtual void /*IComputationNode::*/BeginBackprop() override
         {
-            // Verify that the shapes of the output/input Value matrices that the gradient backprop for this node needs
-            // are intact and have not been erroneously reshaped due to incorrect memory sharing
-            auto VerifyValueShape = [](const ComputationNode<ElemType>& node) {
-                size_t rows, cols;
-                node.DetermineDataSize(rows, cols);
-
-                auto& valueMatrix = node.Value();
-                if ((valueMatrix.GetNumRows() != rows) || (valueMatrix.GetNumCols() != cols))
-                {
-                    LogicError("%ls %ls operation found to have incorrect Value() matrix shape %lu x %lu during backprop; expected shape is %lu x %lu. "
-                               "This may be due to incorrect memory sharing.",
-                               node.NodeName().c_str(), node.OperationName().c_str(), valueMatrix.GetNumRows(), valueMatrix.GetNumCols(), rows, cols);
-                }
-            };
-
-            if (IsOutputNeededDuringBackprop())
-                VerifyValueShape(*this);
-
-            for (size_t i = 0; i < m_inputs.size(); i++)
-            {
-                if (InputUsedInComputingInputNodesGradients(i))
-                    VerifyValueShape(InputRef(i));
-            }
+            Base::BeginBackprop();
         }
-    }
+#endif
 
     virtual void /*IComputationNode::*/ EndBackprop() override
     {
@@ -1891,7 +1863,7 @@ public:
                                       const std::vector<std::string>& labelMapping, const std::string& sequenceSeparator, 
                                       const std::string& sequencePrologue, const std::string& sequenceEpilogue, const std::string& elementSeparator,
                                       const std::string& sampleSeparator, std::string valueFormatString,
-                                      bool outputGradient = false, bool onlyShowAbsSumForDense = false) const;
+                                      bool outputGradient = false) const;
 
     // simple helper to log the content of a minibatch
     void DebugLogMinibatch(bool outputGradient = false) const

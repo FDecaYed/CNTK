@@ -140,8 +140,6 @@ public:
         NOT_IMPLEMENTED;
     }
 
-    static void InnerProduct(const CPUSparseMatrix<ElemType>& a, const CPUMatrix<ElemType>& b, CPUMatrix<ElemType>& c, const bool isColWise);
-
     static void AddScaledDifference(const ElemType /*alpha*/, const CPUSparseMatrix<ElemType>& /*a*/, const CPUMatrix<ElemType>& /*b*/, CPUMatrix<ElemType>& /*c*/,
                                     bool /*bDefaultZero*/)
     {
@@ -219,7 +217,7 @@ public:
     }
 
 public:
-    void NormalGrad(CPUMatrix<ElemType>& c, const ElemType momentum, bool unitGainMomentum = true);
+    void NormalGrad(CPUMatrix<ElemType>& c, const ElemType momentum);
     ElemType Adagrad(CPUMatrix<ElemType>& c, const bool needAveMultiplier);
 
 public:

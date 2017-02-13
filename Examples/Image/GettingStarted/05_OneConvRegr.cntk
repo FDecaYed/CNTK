@@ -39,9 +39,8 @@ trainNetwork = {
         z = model (features)
 
         # loss and error computation
-        diff = labels - z
-        sqerr = ReduceSum (diff.*diff, axis=1)
-        rmse =  Sqrt (sqerr / labelDim)
+        sqErr = SquareError (labels, z)
+        rmse = Sqrt (sqErr / labelDim)
 
         # declare special nodes
         featureNodes    = (features)
@@ -62,7 +61,7 @@ trainNetwork = {
 
     reader = {
         readerType = "CNTKTextFormatReader"
-        # See ../README.md for details on getting the data (Train-28x28_cntk_text.txt).
+        # See ../REAMDE.md for details on getting the data (Train-28x28_cntk_text.txt).
         file = "$DataDir$/Train-28x28_cntk_text.txt"
         input = {
             features   = { dim = 784 ; format = "dense" }

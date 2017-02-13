@@ -150,7 +150,7 @@ ComputationNetwork::PARTraversalFlowControlNode::PARTraversalFlowControlNode(con
         }
 
         // Extreme Tracing, part 1/4
-        if (node->HasEnvironmentPtr() && node->Environment().ShouldDumpNode())
+        if (node->HasEnvironmentPtr() && node->Environment().IsLogLevelNodeTrace())
             DumpNode<float>(node, /*dumpGradient=*/false) || DumpNode<double>(node, false);
     }
 }
@@ -167,7 +167,7 @@ ComputationNetwork::PARTraversalFlowControlNode::PARTraversalFlowControlNode(con
         node->EndBackprop();
 
         // Extreme Tracing, part 2/4
-        if (node->HasEnvironmentPtr() && node->Environment().ShouldDumpNode() && node->NeedsGradient())
+        if (node->HasEnvironmentPtr() && node->Environment().IsLogLevelNodeTrace() && node->NeedsGradient())
             DumpNode<float>(node, /*dumpGradient=*/true) || DumpNode<double>(node, true);
     }
 }
@@ -197,13 +197,12 @@ static bool DumpNode(ComputationNodeBasePtr nodep, bool dumpGradient)
     let dataPtr = dumpGradient ? node->GradientPtr() : node->ValuePtr();
     if (!dataPtr)
         return true; // e.g. SEQ sentinel node
-
-    bool concise = !(nodep->Environment().IsLogLevelNodeTrace());
-
+    if (dataPtr->GetMatrixType() != MatrixType::DENSE) // for now we can only print dense matrices; since this is for debugging, don't fail just skip
+        return true;
     fprintf(stderr, "Dump --> %s%s\n", node->FormatOperationPrototype("").c_str(), dumpGradient ? " Grad" : "");
     node->WriteMinibatchWithFormatting(stderr, FrameRange(), SIZE_MAX, SIZE_MAX, false/*transpose*/, /*isCategoryLabel=*/false, /*isSparse=*/false, std::vector<std::string>(),
                                        ""/*sequenceSeparator*/, "  "/*sequencePrologue*/, "\n"/*sequenceEpilogue*/, " "/*elementSeparator*/, "\n  "/*sampleSeparator*/,
-                                       "%13.10f"/*valueFormatString*/, dumpGradient, concise);
+                                       "%13.10f"/*valueFormatString*/, dumpGradient);
     return true;
 }
 
@@ -258,7 +257,7 @@ static bool DumpNode(ComputationNodeBasePtr nodep, bool dumpGradient)
     // Extreme Tracing, part 3/4
     for (auto& node : m_nestedNodes)
     {
-        if (node->HasEnvironmentPtr() && node->Environment().ShouldDumpNode())
+        if (node->HasEnvironmentPtr() && node->Environment().IsLogLevelNodeTrace())
         {
             DumpNode<float>(node, /*dumpGradient=*/false) || DumpNode<double>(node, false);
         }
@@ -299,7 +298,7 @@ static bool DumpNode(ComputationNodeBasePtr nodep, bool dumpGradient)
     // Extreme Tracing, part 4
     for (auto& node : m_nestedNodes)
     {
-        if (node->HasEnvironmentPtr() && node->Environment().ShouldDumpNode() && node->NeedsGradient())
+        if (node->HasEnvironmentPtr() && node->Environment().IsLogLevelNodeTrace() && node->NeedsGradient())
         {
             DumpNode<float>(node, /*dumpGradient=*/true) || DumpNode<double>(node, true);
         }
@@ -986,7 +985,7 @@ void ComputationNetwork::AllocateAllMatrices(const std::vector<ComputationNodeBa
 
     // Allocate memory for forward/backward computation
     if (TraceLevel() > 0)
-        fprintf(stderr, "\n\nAllocating matrices for forward and/or backward propagation.\n");
+    fprintf(stderr, "\n\nAllocating matrices for forward and/or backward propagation.\n");
 
     VerifyIsCompiled("AllocateAllMatrices");
 
@@ -1005,27 +1004,15 @@ void ComputationNetwork::AllocateAllMatrices(const std::vector<ComputationNodeBa
 
     bool performingBackPropagation = (trainRootNode != nullptr) || (Globals::ShouldEnableHyperCompressMemory());
 
-    // Construct the composite forward prop eval order by enumerating the
-    // nodes corresponding to each of our roots in global eval oder
-    forwardPropRoots = SortByGlobalEvalOrder(forwardPropRoots);
-
     // Create a composite Eval order with the specified nodes as roots
     // For each node determine parents and whether the output of the
     // node is needed during back propagation
     std::unordered_map<ComputationNodeBasePtr, bool> outputValueNeededDuringBackProp;
     std::unordered_map<ComputationNodeBasePtr, std::unordered_set<ComputationNodeBasePtr>> parentsMap;
-    std::vector<ComputationNodeBasePtr> compositeForwardPropEvalOrder;
-    std::unordered_set<ComputationNodeBasePtr> uniqueForwardPropEvalNodes;
     for (auto& rootNode : forwardPropRoots)
     {
         for (const auto& node : GetEvalOrder(rootNode))
         {
-            if (uniqueForwardPropEvalNodes.find(node) == uniqueForwardPropEvalNodes.end())
-            {
-                uniqueForwardPropEvalNodes.insert(node);
-                compositeForwardPropEvalOrder.push_back(node);
-            }
-
             for (int i = 0; i < node->GetNumInputs(); i++)
             {
                 ComputationNodeBasePtr input = node->GetInputs()[i];
@@ -1039,13 +1026,18 @@ void ComputationNetwork::AllocateAllMatrices(const std::vector<ComputationNodeBa
                     outputValueNeededDuringBackProp[input] |= (node->NeedsGradient() && node->InputUsedInComputingInputNodesGradients(i));
                 }
                 else
+                {
                     outputValueNeededDuringBackProp[input] = false;
+                }
             }
         }
     }
 
+    std::unordered_map<ComputationNodeBasePtr, int> parentCount;
     for (auto& keyValue : parentsMap)
     {
+        parentCount[keyValue.first] = keyValue.second.size();
+
         // Indicate on the node that it's parent overwrites its gradient if the node is not part of a loop
         // and has exactly one parent who implements the gradient overwrite optimization
         if (Globals::ShouldOptimizeGradientAccumulation() &&
@@ -1053,12 +1045,21 @@ void ComputationNetwork::AllocateAllMatrices(const std::vector<ComputationNodeBa
             (keyValue.second.size() == 1) &&
             (*keyValue.second.begin())->ImplementsGradientOverwriteOptimization())
         {
-            // We cannot enable the gradient overwrite optimization if this node's (lone) parent
-            // has this same node as multiple of its inputs since, in that case the
-            // gradients will flow back from multiple paths of the same parent into the input
-            auto& allInputsOfParent = (*keyValue.second.begin())->GetInputs();
-            if (std::count(allInputsOfParent.begin(), allInputsOfParent.end(), keyValue.first) <= 1)
-                keyValue.first->MarkParentOverwritesGradient();
+            keyValue.first->MarkParentOverwritesGradient();
+        }
+    }
+
+    // Construct the composite forward prop eval order by enumerating the
+    // nodes corresponding to each of our roots and then arranging them in the
+    // relative order that they appear in the global evaluation order
+    const std::list<ComputationNodeBasePtr>& allNodesEvalOrder = GetEvalOrder(nullptr);
+    std::list<ComputationNodeBasePtr> nodesForForwardPropRoots = ComputationNodeBase::EnumerateNodes(forwardPropRoots);
+    std::vector<ComputationNodeBasePtr> compositeForwardPropEvalOrder;
+    for (auto& node : allNodesEvalOrder)
+    {
+        if (std::find(nodesForForwardPropRoots.cbegin(), nodesForForwardPropRoots.cend(), node) != nodesForForwardPropRoots.cend())
+        {
+            compositeForwardPropEvalOrder.push_back(node);
         }
     }
 
@@ -1077,15 +1078,17 @@ void ComputationNetwork::AllocateAllMatrices(const std::vector<ComputationNodeBa
                 recInfo->RequestMatricesBeforeForwardProp(m_matrixPool);
 
                 for (auto& nodeLoopIter : recInfo->m_nestedNodes)
-                    ReleaseMatricesAfterEvalForChildren(nodeLoopIter, parentsMap);
+                {
+                    ReleaseMatricesAfterEvalForChildren(nodeLoopIter, parentCount);
+                }
             }
         }
         else
         {
             nodeIter->RequestMatricesBeforeForwardProp(m_matrixPool);
-            // we only release matrices for the children since the root node's information will be used
-            // and should not be shared with others
-            ReleaseMatricesAfterEvalForChildren(nodeIter, parentsMap);
+            // we only release matrices for the children since the root node's information will be used and should not be shared
+            // with others
+            ReleaseMatricesAfterEvalForChildren(nodeIter, parentCount);
         }
     }
 
@@ -1131,20 +1134,17 @@ void ComputationNetwork::AllocateAllMatrices(const std::vector<ComputationNodeBa
 
     // print the memory sharing structure
     if (TraceLevel() > 0)
-        PrintMemorySharingStructure(GetAllNodes());
+    PrintMemorySharingStructure(GetAllNodes());
 }
 
-void ComputationNetwork::ReleaseMatricesAfterEvalForChildren(ComputationNodeBasePtr n, std::unordered_map<ComputationNodeBasePtr, std::unordered_set<ComputationNodeBasePtr>>& parentsMap)
+void ComputationNetwork::ReleaseMatricesAfterEvalForChildren(ComputationNodeBasePtr n, std::unordered_map<ComputationNodeBasePtr, int>& parentCount)
 {
     for (int i = 0; i < n->GetNumInputs(); i++)
     {
         ComputationNodeBasePtr pNode = n->GetInputs()[i];
-        if (!parentsMap[pNode].empty())
-        {
-            parentsMap[pNode].erase(n);
-            if (parentsMap[pNode].empty())
-                pNode->ReleaseMatricesAfterForwardProp(m_matrixPool);
-        }
+        parentCount[pNode]--;
+        if (parentCount[pNode] == 0)
+            pNode->ReleaseMatricesAfterForwardProp(m_matrixPool);
     }
 }
 

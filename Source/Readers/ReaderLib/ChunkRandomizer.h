@@ -71,7 +71,7 @@ namespace Microsoft { namespace MSR { namespace CNTK {
     class ChunkRandomizer
     {
     public:
-        ChunkRandomizer(IDataDeserializerPtr deserializer, size_t randomizationRange, bool sampleBasedRandomizationWindow = true);
+        ChunkRandomizer(IDataDeserializerPtr deserializer, size_t randomizationRangeInSamples, bool legacy = false);
 
         // Gets randomized chunks.
         const std::vector<RandomizedChunk>& GetRandomizedChunks() const;
@@ -79,26 +79,16 @@ namespace Microsoft { namespace MSR { namespace CNTK {
         // Randomizes chunks based on the seed.
         void Randomize(unsigned int seed);
 
-        // Randomize by spraying original sequences over a window of "m_randomizationRange" samples.
-        void RandomizeUsingWindowInSamples();
-
-        // Randomize by spraying original sequences over a window of "m_randomizationRange" of chunks.
-        void RandomizeUsingWindowInChunks();
-
     private:
         IDataDeserializerPtr m_deserializer;
         // Randomized chunks.
         std::vector<RandomizedChunk> m_randomizedChunks;
         // Original chunks.
         std::vector<ChunkDescriptionPtr> m_originalChunks;
-
+        // Whether to use legacy mode for randomization.
+        bool m_legacy;
         // Randomization range in samples.
-        size_t m_randomizationRange;
-
-        // Specifies how to interpret randomization range,
-        // if true randomization range == number of samples, else 
-        // randomization range = number of chunks.
-        bool m_sampleBasedRandomizationWindow;
+        size_t m_randomizationRangeInSamples;
 
         std::mt19937_64 m_rng;
     };

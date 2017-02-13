@@ -1,6 +1,6 @@
 //
 // Copyright (c) Microsoft. All rights reserved.
-// Copyright (c) 2016-2017, NVIDIA CORPORATION. All rights reserved.
+// Copyright (c) 2016, NVIDIA CORPORATION. All rights reserved.
 // Licensed under the MIT license. See LICENSE.md file in the project root for full license information.
 //
 // SGD.cpp -- implements SGD with all bells and whistles, parallelization, randomization, etc.
@@ -21,10 +21,8 @@
 //static inline bool operator==(const std::pair<double,size_t>& a, double b) { assert(b==0); return a.first == b; }
 // ^^ workaround until this line in AggregateGradientsImpl() gets updated: assert(headerCPU->evalErrors[i] == 0);
 #include "AllReduceDistGradAggregator.h"
-
 #include "BlockMomentumSGD.h"
 #include "V2BlockMomentumSGD.h"
-
 #include "V2AllReduceDistGradAggregator.h"
 #endif
 
@@ -33,7 +31,6 @@
 #include "SimpleDistGradAggregator.h"
 #include "V2SimpleDistGradAggregator.h"
 #include "ProgressTracing.h"
-#include "PerformanceProfiler.h"
 
 #include <map>
 #include <set>
@@ -427,13 +424,6 @@ void SGD<ElemType>::TrainOrAdaptModel(int startEpoch, ComputationNetworkPtr net,
     // --- MAIN EPOCH LOOP
     for (int i = startEpoch; i < (int) m_maxEpochs; i++) // TODO: why is this an int, and not a size_t?
     {
-        // Always skip the first epoch for profiling to avoid startup behavior.
-        // This has effect only if the profiler is globally enabled (profilerEnabled="true" in the config).
-        if (i > startEpoch)
-        {
-            ProfilerEnable(true);
-        }
-
         // Synchronize all ranks before proceeding to ensure that
         // rank 0 has finished writing the previous model file
         SynchronizeWorkers();
@@ -860,8 +850,6 @@ size_t SGD<ElemType>::TrainOneEpoch(ComputationNetworkPtr net,
                                     const std::string& prefixMsg,
                                     const size_t maxNumberOfSamples)
 {
-    PROFILE_SCOPE(profilerEvtMainEpoch);
-
     ScopedNetworkOperationMode modeGuard(net, NetworkOperationMode::training);
 
     // bring our 'out' values into consistent state
@@ -1016,20 +1004,22 @@ size_t SGD<ElemType>::TrainOneEpoch(ComputationNetworkPtr net,
         epochStartSample = trainSetDataReader->GetCurrentSamplePosition();
     }
 
-    auto forwardPropRoots = evaluationNodes;
-    forwardPropRoots.push_back(criterionNodes[0]);
-
     bool noMoreSamplesToProcess = false;
     bool isFirstMinibatch = true;
     for (;;)
     {
-        auto profMinibatch = ProfilerTimeBegin();
+        // Per-minibatch performance measurements; only enabled when perfTraceLevel > 0
+        Timer fineGrainedPerfMeasurementTimer;
+        double readTime = 0;
+        double computeTime = 0;
+        double parameterUpdateTime = 0;
+        double parameterSyncTime = 0; // perf communication time between syncs.
+        if (m_perfTraceLevel > 0)
+            fineGrainedPerfMeasurementTimer.Start();
 
         // get minibatch
         // TODO: is it guaranteed that the GPU is already completed at this point, is it safe to overwrite the buffers?
         size_t actualMBSize = 0;
-
-        auto profGetMinibatch = ProfilerTimeBegin();
         bool wasDataRead = DataReaderHelpers::GetMinibatchIntoNetwork<ElemType>(*trainSetDataReader, net, criterionNodes[0],
                                                                                 useDistributedMBReading, useParallelTrain, *inputMatrices, actualMBSize, m_mpi);
 
@@ -1039,17 +1029,18 @@ size_t SGD<ElemType>::TrainOneEpoch(ComputationNetworkPtr net,
         if (!wasDataRead && (!useDistributedMBReading || noMoreSamplesToProcess)) // in case of distributed reading, we do a few more loops until all ranks have completed
             break;                                                                // end of epoch
 
-        // Note: If !wasDataRead then the data that GetMinibatchIntoNetwork() was supposed to fill in are undefined.
+        if (m_perfTraceLevel > 0)
+        {
+            fineGrainedPerfMeasurementTimer.Stop();
+            readTime = fineGrainedPerfMeasurementTimer.ElapsedSeconds();
+            fineGrainedPerfMeasurementTimer.Start();
+        }
+
+        // Note: If !wasDataRead then the data that GetMinibatchIntoNetwork() was supposed to full in are undefined.
         // Must not touch them.
 
         if (!wasDataRead)
-        {
             actualMBSize = 0; // (undefined if !wasDataRead)
-            ProfilerEnable(false); // Profiler will be enabled at the beginning of the next epoch.
-        }
-
-        ProfilerTimeEnd(profGetMinibatch, profilerEvtMainGetMinibatch);
-        auto profForwardBackward = ProfilerTimeBegin();
 
         nSamplesSinceLastModelSync += actualMBSize;
 
@@ -1109,7 +1100,13 @@ size_t SGD<ElemType>::TrainOneEpoch(ComputationNetworkPtr net,
 
                 // compute eval node first since when gradient is computed the forward function values
                 // may be changed and need to be recomputed when gradient and function value share the same matrix
-                net->ForwardProp(forwardPropRoots); // the bulk of this evaluation is reused in ComputeGradient() below
+                net->ForwardProp(evaluationNodes); // the bulk of this evaluation is reused in ComputeGradient() below
+
+                // ===========================================================
+                // forward prop for training criterion
+                // ===========================================================
+
+                net->ForwardProp(criterionNodes[0]);
 
                 // ===========================================================
                 // backprop
@@ -1135,8 +1132,14 @@ size_t SGD<ElemType>::TrainOneEpoch(ComputationNetworkPtr net,
                 maxNumSamplesExceeded = true;
         }
 
-        ProfilerTimeEnd(profForwardBackward, profilerEvtMainFB);
-        auto profGradientAgg = ProfilerTimeBegin();
+        if (m_perfTraceLevel > 0)
+        {
+            std::unique_ptr<MatrixComputeStreamEvent> mainStreamSyncEvent(MatrixComputeStreamEvent::Create(net->GetDeviceId()));
+            mainStreamSyncEvent->SynchronizeEvent();
+            fineGrainedPerfMeasurementTimer.Stop();
+            computeTime = fineGrainedPerfMeasurementTimer.ElapsedSeconds();
+            fineGrainedPerfMeasurementTimer.Start();
+        }
 
         // for momentum/clipping/regularization/etc., as well as for progress and statistics, we should only count frames that are not gaps
         // #samples according to the default dynamic axis, for use with criterion nodes that do not have an MBLayout
@@ -1226,9 +1229,6 @@ size_t SGD<ElemType>::TrainOneEpoch(ComputationNetworkPtr net,
             }
         }
 
-        ProfilerTimeEnd(profGradientAgg, profilerEvtMainGradient);
-        auto profWeights = ProfilerTimeBegin();
-
         // update model parameters
         if ((aggregateNumSamples > 0) && (learnRatePerSample > m_minLearnRate * 0.01))
         {
@@ -1275,6 +1275,15 @@ size_t SGD<ElemType>::TrainOneEpoch(ComputationNetworkPtr net,
         }
 
 
+        if (m_perfTraceLevel > 0)
+        {
+            std::unique_ptr<MatrixComputeStreamEvent> mainStreamSyncEvent(MatrixComputeStreamEvent::Create(net->GetDeviceId()));
+            mainStreamSyncEvent->SynchronizeEvent();
+            fineGrainedPerfMeasurementTimer.Stop();
+            parameterUpdateTime = fineGrainedPerfMeasurementTimer.ElapsedSeconds();
+            fineGrainedPerfMeasurementTimer.Start();
+        }
+
         // aggregation by model averaging or block momentum 
         if (useModelAggregation)
         {
@@ -1310,10 +1319,18 @@ size_t SGD<ElemType>::TrainOneEpoch(ComputationNetworkPtr net,
         }
 
 
-        ProfilerTimeEnd(profWeights, profilerEvtMainWeights);
-        auto profPost = ProfilerTimeBegin();
+        if (m_perfTraceLevel > 0)
+        {
+            fineGrainedPerfMeasurementTimer.Stop();
+            parameterSyncTime = fineGrainedPerfMeasurementTimer.ElapsedSeconds();
+        }
 
         timer.Stop();
+        if (m_perfTraceLevel > 0)
+        {
+            PREPENDTS(stderr);
+            fprintf(stderr, "Perf trace: Worker MB size = %d, Read = %.5gs; Compute = %.5gs; Parameter update = %.5gs; Parameter sync = %.5gs; Aggregate MB size = %d\n", (int)actualMBSize, readTime, computeTime, parameterUpdateTime, parameterSyncTime, (int)aggregateNumSamples);
+        }
 
         numMBsRun++;
         totalTimeInMBs += timer.ElapsedSeconds();
@@ -1436,9 +1453,6 @@ size_t SGD<ElemType>::TrainOneEpoch(ComputationNetworkPtr net,
 
         profiler.NextSample();
         isFirstMinibatch = false;
-
-        ProfilerTimeEnd(profPost, profilerEvtMainPost);
-        ProfilerTimeEnd(profMinibatch, profilerEvtMainMinibatch);
     }
 
     // --- END MAIN MINIBATCH LOOP
@@ -2098,7 +2112,7 @@ void SGD<ElemType>::InitDistGradAgg(int numEvalNodes, int numGradientBits, int d
         if (traceLevel > 0)
             fprintf(stderr, "Initializing dataParallelSGD with FP%d aggregation.\n", numGradientBits);
         if (Globals::UseV2Aggregator()) // Currently used to check V2 against baselines.
-            m_distGradAgg = std::make_shared<V2SimpleDistGradAggregator<ElemType>>(m_mpi, m_bufferedAsyncGradientAggregation, deviceId, m_syncStatsTrace, ::CNTK::MPICommunicator());
+            m_distGradAgg = std::make_shared<V2SimpleDistGradAggregator<ElemType>>(m_mpi, m_bufferedAsyncGradientAggregation, m_syncStatsTrace, ::CNTK::MPICommunicator());
         else
             m_distGradAgg = std::make_shared<SimpleDistGradAggregator<ElemType>>(m_mpi, m_bufferedAsyncGradientAggregation, deviceId, m_syncStatsTrace);
     }
@@ -2149,7 +2163,7 @@ void SGD<ElemType>::InitModelAggregationHandler(int traceLevel, DEVICEID_TYPE de
 // UpdateWeights() - actual weight update, implementing various update rules
 template <class ElemType>
 void SGD<ElemType>::UpdateWeights(Matrix<ElemType>& functionValues, Matrix<ElemType>& gradientValues,
-                                  Matrix<ElemType>& smoothedGradientValues, double& smoothedCount,
+                                  Matrix<ElemType>& smoothedGradient, double& smoothedCount,
                                   const double learnRatePerSample, const double momentumPerSample,
                                               size_t actualMBSize,
                                   const double L2RegWeight, const double L1RegWeight,
@@ -2164,7 +2178,7 @@ void SGD<ElemType>::UpdateWeights(Matrix<ElemType>& functionValues, Matrix<ElemT
     LOGPRINTF(stderr, "GradUpdateType()=%d, GradientUpdateNoiseStd()=%0.8f\n",
               GradUpdateType(), GradientUpdateNoiseStd());
     gradientValues.Print("Gradient Input");
-    smoothedGradientValues.Print("Smoothed Gradient Input");
+    smoothedGradient.Print("Smoothed Gradient Input");
 #endif
 
     // make actualMBSize is a valid value
@@ -2194,23 +2208,16 @@ void SGD<ElemType>::UpdateWeights(Matrix<ElemType>& functionValues, Matrix<ElemT
 
     if (adpType == GradientsUpdateType::None)
     {
-        // even if momentum is 0.0, still need to call a momentum-based update to store 
-        // [learning rate * current gradient values] in the smoothed gradients, in case
-        // the momentum value for the next epoch is non-zero.
-        if (!useNesterovMomentum)
-        {
-            functionValues.MomentumSGDUpdate(gradientValues, smoothedGradientValues, 
-                                             ElemType(learnRatePerSample), ElemType(momentum));
-        }
-        else
-        {
-            functionValues.NesterovAcceleratedMomentumSGDUpdate(gradientValues, smoothedGradientValues, 
-                                                                ElemType(learnRatePerSample), ElemType(momentum));
-        }
+        smoothedGradient.NormalGrad(gradientValues, functionValues,
+                                    (ElemType) learnRatePerSample, (ElemType) momentum, useNesterovMomentum);
     }
-    else if (adpType == GradientsUpdateType::AdaGrad)
+    else if (adpType == GradientsUpdateType::AdaGrad ||
+             (adpType == GradientsUpdateType::RmsProp && gradientValues.GetMatrixType() == MatrixType::SPARSE) ||
+             (adpType == GradientsUpdateType::FSAdaGrad && gradientValues.GetMatrixType() == MatrixType::SPARSE))
     {
-        double aveMultiplier = smoothedGradientValues.Adagrad(gradientValues, needAveMultiplier);
+        // rmsprop for sparse is not implemented yet, delegate it with adagrad
+
+        double aveMultiplier = smoothedGradient.Adagrad(gradientValues, needAveMultiplier);
         Matrix<ElemType>::ScaleAndAdd((ElemType)(-learnRatePerSample / aveMultiplier), gradientValues, functionValues);
     }
     else if (adpType == GradientsUpdateType::FSAdaGrad)
@@ -2220,14 +2227,14 @@ void SGD<ElemType>::UpdateWeights(Matrix<ElemType>& functionValues, Matrix<ElemT
         static double smoothedCount = 0;
 #endif
 
-        smoothedGradientValues.FSAdagradUpdate(actualMBSize,
+        smoothedGradient.FSAdagradUpdate(actualMBSize,
                                          gradientValues, functionValues, smoothedCount,
                                          learnRatePerSample, m_gradType.targetAdagradAvDenom,
                                          momentum, varMomentum);
     }
     else if (adpType == GradientsUpdateType::RmsProp)
     {
-        double aveMultiplier = smoothedGradientValues.RmsProp(gradientValues, (ElemType) m_rpi.gamma,
+        double aveMultiplier = smoothedGradient.RmsProp(gradientValues, (ElemType) m_rpi.gamma,
                                                         (ElemType) m_rpi.inc, (ElemType) m_rpi.max,
                                                         (ElemType) m_rpi.dec, (ElemType) m_rpi.min, needAveMultiplier);
         Matrix<ElemType>::ScaleAndAdd((ElemType)(-learnRatePerSample / aveMultiplier), gradientValues, functionValues);
@@ -2310,8 +2317,8 @@ void SGD<ElemType>::SaveCheckPointInfo(const size_t epoch, const size_t totalSam
 
             for (auto smoothedGradientIter = smoothedGradients.begin(); smoothedGradientIter != smoothedGradients.end(); smoothedGradientIter++)
             {
-                const Matrix<ElemType>& smoothedGradientValues = *smoothedGradientIter;
-                fstream << smoothedGradientValues;
+                const Matrix<ElemType>& smoothedGradient = *smoothedGradientIter;
+                fstream << smoothedGradient;
             }
 
             fstream.PutMarker(FileMarker::fileMarkerEndSection, L"EGradient");
@@ -2406,8 +2413,8 @@ void SGD<ElemType>::LoadCheckPointInfo(const size_t epochNumber,
 
     for (auto smoothedGradientIter = smoothedGradients.begin(); smoothedGradientIter != smoothedGradients.end(); smoothedGradientIter++)
     {
-        Matrix<ElemType>& smoothedGradientValues = *smoothedGradientIter;
-        fstream >> smoothedGradientValues;
+        Matrix<ElemType>& smoothedGradient = *smoothedGradientIter;
+        fstream >> smoothedGradient;
     }
     fstream.GetMarker(FileMarker::fileMarkerEndSection, L"EGradient");
 
@@ -2887,6 +2894,8 @@ SGDParams::SGDParams(const ConfigRecordType& configSGD, size_t sizeofElemType)
 
     // BUGBUG: these are not passed to Init()
     m_doUnitTest = configSGD(L"unitTest", false);
+
+    m_perfTraceLevel = configSGD(L"perfTraceLevel", (int)0);
 
     // parallel training
     m_parallelizationMethod = ParallelizationMethod::none;

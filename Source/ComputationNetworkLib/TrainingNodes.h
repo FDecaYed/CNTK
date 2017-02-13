@@ -11,6 +11,7 @@
 #include "InputAndParamNodes.h"
 #include "CPURNGHandle.h"
 
+
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
 #include <map>
@@ -721,10 +722,10 @@ public:
             InvalidArgument("%ls operation requires three inputs instead of %d.", NodeDescription().c_str(), (int)m_inputs.size());
 
         if (Input(0)->NeedsGradient() == true)
-            InvalidArgument("%ls %ls operation needs input type (no gradient) for gain input.", NodeName().c_str(), OperationName().c_str());
+            InvalidArgument("%ls %ls operation needs input type (no gradient) for the 1st input.", NodeName().c_str(), OperationName().c_str());
 
         if (Input(2)->NeedsGradient() == true)
-            InvalidArgument("%ls %ls operation needs input type (no gradient) for group input.", NodeName().c_str(), OperationName().c_str());
+            InvalidArgument("%ls %ls operation needs input type (no gradient) for the 3rd input.", NodeName().c_str(), OperationName().c_str());
 
         ValidateBinaryReduce(isFinalValidationPass);
     }
@@ -1145,12 +1146,12 @@ template class NoiseContrastiveEstimationNode<double>;
 
 
 // Nodes using a random number generators should derive from this interface.
-// One purpose of this interface is to have a common interface for setting the seeds when setting up a network.
+// One purpuose of this interface is to have a common interface for setting the seeds when setting up a network.
 class IRngUser
 {
 public:
     virtual RNGHandle& GetRNGHandle(DEVICEID_TYPE deviceId) = 0;
-    virtual void SetRngState(uint64_t seed, uint64_t offset = 0) = 0;
+    virtual void SetRngState(unsigned long seed, unsigned long long offset = 0) = 0;
 };
 
 // This implements IRngUser using RNGHandle.
@@ -1166,61 +1167,31 @@ public:
     }
 
     // E.g. called from ComputationNetwork to make sure that CNTK running on different nodes will have different seed.
-    void SetRngState(uint64_t seed, uint64_t offset = 0) override
+    void SetRngState(unsigned long seed, unsigned long long offset = 0) override
     {
         m_rngSeed = seed;
         m_rngOffset = offset;
         m_RNGHandle.reset(); // Reset handle. New handle will be generated with next call of GetRNGHandle(...).
     }
 
-    uint64_t GetRngSeed() const
+    unsigned long GetRngSeed() const
     {
         return m_rngSeed;
     }
 
-    uint64_t GetRngOffset() const
+    unsigned long long GetRngOffset() const
     {
         return m_rngOffset;
     }
 
-    void UpdateRngOffset(uint64_t val)
+    void UpdateRngOffset(unsigned long long val)
     {
         m_rngOffset = val;
     }
 
 protected:
-
-    void Load(File& fstream, size_t modelVersion)
-    {
-        if (modelVersion < CNTK_MODEL_VERSION_16)
-            return;
-
-        uint64_t seed;
-        uint64_t offset;
-
-        if (modelVersion == CNTK_MODEL_VERSION_16)
-        {
-            unsigned long seed_16;
-            fstream >> seed_16;
-            seed = seed_16;
-        }
-        else 
-        {
-            fstream >> seed;
-        }
-
-        fstream >> offset;
-        SetRngState(seed, offset);  
-    }
-
-    void Save(File& fstream) const
-    {
-        fstream << GetRngSeed();
-        fstream << GetRngOffset();
-    }
-
-    uint64_t m_rngSeed = 0;
-    uint64_t m_rngOffset = 0;
+    unsigned long m_rngSeed = 0;
+    unsigned long long m_rngOffset = 0;
     std::shared_ptr<RNGHandle> m_RNGHandle;
 };
 
@@ -1245,7 +1216,7 @@ public:
     RandomSampleNodeBase(DEVICEID_TYPE deviceId, const wstring& name, size_t sizeOfSampledSet = 0, bool allowDuplicates = false)
         : Base(deviceId, name), m_sizeOfSampledSet(sizeOfSampledSet), m_allowDuplicates(allowDuplicates)
     {
-        SetRngState(CreateUniqId());
+        SetRngState((unsigned long)CreateUniqId());
     }
 
     RandomSampleNodeBase(const ScriptableObjects::IConfigRecordPtr configp)
@@ -2121,7 +2092,7 @@ public:
         : Base(deviceId, name),
         m_dropoutRate(0)
     {
-        SetRngState(CreateUniqId());
+        SetRngState((unsigned long)CreateUniqId());
     }
 
     virtual void Save(File& fstream) const override;
@@ -2220,7 +2191,7 @@ private:
 };
 
 // -----------------------------------------------------------------------
-// BatchNormalizationNode (input, scale, bias, runMean, runVariance, runCount,
+// BatchNormalizationNode (input, scale, bias, runMean, runVariance,
 //                         spatial, normalizationTimeConstant = 0, blendTimeConstant = 0,
 //                         epsilon = 0.00001,
 //                         useCntkEngine = true, imageLayout = 'cudnn')
@@ -2248,7 +2219,6 @@ private:
 //      It is represented as a LearnableParameter with the same dimensions as scale and bias.
 // * runVariance is the running variance which is used during evaluation phase and might be used during training as well.
 //      It is represented as a LearnableParameter with the same dimensions as scale and bias.
-// * runCount is the sample count needed for estimating runMean and runVariance. Pass a [1] tensor here.
 // * spatial is a flag that specifies whether to compute mean / var for each feature in a minibatch independently or, in case of convolutional layers, per feature map.
 //      TODO: This must be configured in a generic fashion where tensor axes are chosen along which parameters are tied.
 // * normalizationTimeConstant is the time constant which is used to compute running average of mean and variance.
@@ -2262,32 +2232,25 @@ private:
 // * imageLayout is the image layout. Only cudnn is supported at present.
 // -----------------------------------------------------------------------
 template <class ElemType>
-class BatchNormalizationNode : public ComputationNodeNonLooping<ElemType>, public NumInputs<6>, public IFreezable,
+class BatchNormalizationNode : public ComputationNodeNonLooping<ElemType>, public NumInputs<5>, public IFreezable,
     public IdentityTransformerNodeOnOneInput<0>
 {
     typedef ComputationNodeNonLooping<ElemType> Base; UsingComputationNodeMembersBoilerplate;
     static const std::wstring TypeName() { return L"BatchNormalization"; }
 
-    // inputs
-    // TODO: Change all of these throughout the codebase to 'class enum'. Also change all places where we still use integer constants.
-    static const size_t DATA      = 0;
-    static const size_t SCALE     = 1;
-    static const size_t BIAS      = 2;
-    static const size_t RUN_MEAN  = 3;
-    static const size_t RUN_VAR   = 4;
-    static const size_t RUN_COUNT = 5;
 public:
-    BatchNormalizationNode(DEVICEID_TYPE deviceId, const wstring& name, bool spatial = false,
-                           double normalizationTimeConstant=0, double blendTimeConstant=0,
-                           double epsilon = 0, bool useCntkEngine = true, ImageLayoutKind imageLayoutKind = ImageLayoutKind::CHW) :
-        Base(deviceId, name), m_spatial(spatial), m_normTimeConst(normalizationTimeConstant), m_blendTimeConst(blendTimeConstant),
-        m_epsilon(epsilon), m_useCntkEngine(useCntkEngine), m_imageLayoutKind(imageLayoutKind),
-        m_runCountIsZero(true),
-        m_pre19SampleCount(0),
-        m_convertRunningVariancePending(false),
-        m_one(1, 1, deviceId)
+    BatchNormalizationNode(DEVICEID_TYPE deviceId, const wstring& name) :
+        Base(deviceId, name), m_spatial(false), m_normTimeConst(0), m_blendTimeConst(0), m_epsilon(0), m_useCntkEngine(true),
+        m_samplesSeen(0), m_imageLayoutKind(ImageLayoutKind::CHW),
+        m_convertRunningVariancePending(false)
     {
-        m_one.SetValue((ElemType)1); // (constant value used for GPU-side update of runCount)
+    }
+    BatchNormalizationNode(DEVICEID_TYPE deviceId, const wstring& name, bool spatial, double normalizationTimeConstant, double blendTimeConstant,
+                           double epsilon, bool useCntkEngine, ImageLayoutKind imageLayoutKind, size_t samplesSeen = 0) :
+        Base(deviceId, name), m_spatial(spatial), m_normTimeConst(normalizationTimeConstant), m_blendTimeConst(blendTimeConstant),
+        m_epsilon(epsilon), m_useCntkEngine(useCntkEngine), m_imageLayoutKind(imageLayoutKind), m_samplesSeen(samplesSeen),
+        m_convertRunningVariancePending(false)
+    {
     }
     BatchNormalizationNode(const ScriptableObjects::IConfigRecordPtr configp) :
         BatchNormalizationNode(configp->Get(L"deviceId"), L"<placeholder>", configp->Get(L"spatial"),
@@ -2306,14 +2269,14 @@ public:
         fstream << m_normTimeConst;
         fstream << m_blendTimeConst;
         fstream << (int32_t)m_imageLayoutKind;
-        fstream << m_runCountIsZero;  // this is only saved for optimizing 0-checks;
+        fstream << m_samplesSeen;
         fstream << m_epsilon;
         fstream << m_useCntkEngine;
     }
 
     void Load(File& fstream, size_t modelVersion) override
     {
-        size_t mbCount = 0, runSampleCount = 0;
+        size_t mbCount = 0;
         Base::Load(fstream, modelVersion);
 
         if (modelVersion >= CNTK_MODEL_VERSION_6)
@@ -2322,20 +2285,10 @@ public:
             fstream >> m_normTimeConst;
             fstream >> m_blendTimeConst;
             fstream >> m_imageLayoutKind;
-
-            if (modelVersion >= CNTK_MODEL_VERSION_19)
-            {
-                fstream >> m_runCountIsZero; // the correct count will be loaded into the tied run count paramter.
-            }
-            else if (modelVersion >= CNTK_MODEL_VERSION_13) 
-            {
-                fstream >> runSampleCount;
-            }    
-            else 
-            {
+            if (modelVersion >= CNTK_MODEL_VERSION_13)
+                fstream >> m_samplesSeen;
+            else
                 fstream >> mbCount; // converted below
-            }
-
             fstream >> m_epsilon;
             fstream >> m_useCntkEngine;
         }
@@ -2382,31 +2335,20 @@ public:
 
         if (modelVersion < CNTK_MODEL_VERSION_13)
         {
-            // Prior to version 12, and prior to storing counts in a shared Parameter, minibatch count was stored instead of samples seen.
+            // Prior to version 12, minibatch count was stored instead of samples seen.
             // Approximate by assuming minibatch size 16, inform about that.
-            runSampleCount = 16 * mbCount;
+            m_samplesSeen = 16 * mbCount;
             fprintf(stderr,
                     "INFO: %ls: loading pre-CuDNNv5 model: approximated mini-batch count of %" PRIu64 " as %" PRIu64 " trained samples.\n"
                     "      Statistics in further training may be biased; consider re-training instead.\n",
-                    NodeName().c_str(), mbCount, runSampleCount);
+                    NodeName().c_str(), mbCount, m_samplesSeen);
 
             // Prior to version 12, running inverse standard deviation was
             // stored in Input 4. Now variance is used. We (approximately)
             // convert it during validation later (and then clear the flag).
             m_convertRunningVariancePending = true;
         }
-
-
-        if (modelVersion < CNTK_MODEL_VERSION_19)
-        {
-            m_runCountIsZero = (runSampleCount == 0);
-            // Cannot call "Input(RUN_COUNT)->Value().SetValue(ElemType(runSampleCount))" right here,
-            // inputs are not yet attached at this point.
-            m_pre19SampleCount = runSampleCount;
-        }
     }
-
-    void AttachInputs(const std::vector<ComputationNodeBasePtr>& inputs) override;
 
     void CopyTo(ComputationNodeBasePtr nodeP, const std::wstring& newName, const CopyNodeFlags flags) const override
     {
@@ -2416,44 +2358,19 @@ public:
             auto node = dynamic_pointer_cast<BatchNormalizationNode<ElemType>>(nodeP);
             assert(node != nullptr);
 
-            node->m_spatial         = m_spatial;
-            node->m_normTimeConst   = m_normTimeConst;
-            node->m_blendTimeConst  = m_blendTimeConst;
+            node->m_spatial = m_spatial;
+            node->m_normTimeConst = m_normTimeConst;
+            node->m_blendTimeConst = m_blendTimeConst;
             node->m_imageLayoutKind = m_imageLayoutKind;
-            node->m_runCountIsZero = m_runCountIsZero;
-            node->m_epsilon         = m_epsilon;
-            node->m_useCntkEngine   = m_useCntkEngine;
+            node->m_samplesSeen = m_samplesSeen;
+            node->m_epsilon = m_epsilon;
+            node->m_useCntkEngine = m_useCntkEngine;
         }
     }
 
+    size_t GetSamplesSeen() const { return m_samplesSeen; }
+
 private: // time-constant conversions
-    
-    void ResetRunCount()
-    {
-        Input(RUN_COUNT)->Value().SetValue(0);
-        m_runCountIsZero = true;
-    }
-
-    void AggregateRunCount(size_t countToAdd)
-    {
-        Input(RUN_COUNT)->Value().AddWithScaleOf(/*alpha=*/(ElemType)countToAdd, m_one); // this += countToAdd * (1)
-        // this is only needed for 0 checks.
-        m_runCountIsZero = m_runCountIsZero && (countToAdd == 0);
-    }
-
-    size_t RunCount() const // const version of above; keep identical
-    {
-        auto count = (size_t)Input(RUN_COUNT)->Value().Get00Element();
-        m_runCountIsZero = (count == 0);
-        return count;
-    }
-    
-    bool IsRunCount0() const 
-    { 
-        // check the flag first to avoid GPU sync 
-        // (when it's false, we know for a fact that the running count is non-zero)
-        return m_runCountIsZero && RunCount() == 0;
-    } 
 
     // map time constants to exp avg factor
     // This is the factor for the current MB's estimate (1-factor is used for the previous value of the running stats).
@@ -2461,29 +2378,16 @@ private: // time-constant conversions
     {
         // in inference mode, only use long-term mean and do not update running estimates
         if (!Environment().IsTraining())
-        {
-            return 0; // (m_normTimeConst == infinity) no new contribution from current minibatch
-        }
+            return 0;                                        // (m_normTimeConst == infinity) no new contribution from current minibatch
+
+        // Initialization case: only use current minibatch.
+        if (m_samplesSeen == 0) return 1.0;
 
         double numSamples = (double)GetMBLayout()->GetActualNumSamples();
 
-        // m_normTimeConst < 0 is used to denote corpus-level statistics (without forgetting factor).
-        // BUGBUG: Corpus aggregation in float is numerically instable. E.g. over a corpus of 36000 samples,
-        //         the first few MBs are the same when sharing the same node twice at a split point vs.
-        //         applying it right before the split. However, at the end, averages differ notably.
-        //         Errs increase from 2.9% to 3.2%. For 36000 samples (~500 MBs), the last summation has 13 bits.
-        //         In contrast, after 1000 samples, accuracy is identical; and marginally different after 5000.
+        // REVIEW alexeyk: hack, m_normTimeConst < 0 is used to denote corpus-level statistics (without forgetting factor).
         if (m_normTimeConst < 0)
-            return numSamples / (numSamples + RunCount());
-
-        // Initialization case: only use current minibatch.
-        // BUGBUG: This gives the first MB an unduely high contribution.
-        //         This now implements a low-pass filter over a sequence
-        //         ...AAAAAAAAAABCDEFG... where A is the first MB, which is infinitely repeated.
-        //         The error will taper off; the first MB will have reduced to 37% of the average after
-        //         #samples = batchNormTimeConstant. So for our default of 5000, it likely matter little.
-        if (IsRunCount0())
-            return 1.0;
+            return numSamples / (numSamples + m_samplesSeen); // (this is the hack case)
 
         // Convert to per-minibatch factor. The limit, positive infinity, means that running mean/var parameters are "frozen"
         // that is, do not require updates.
@@ -2491,7 +2395,7 @@ private: // time-constant conversions
         if (!isfinite(m_normTimeConst))                      // infinite
             return 0;                                        // no new contribution from current minibatch (infinitely long memory)
         else if (m_normTimeConst > 0)                        // not zero
-            return -expm1(-numSamples / m_normTimeConst);    // interpolate expAvgFactor * MB stats + (1-expAvgFactor) * prev running stats
+            return 1.0 - exp(-numSamples / m_normTimeConst); // interpolate expAvgFactor * MB stats + (1-expAvgFactor) * prev running stats
         else                                                 // zero
             return 1.0;                                      // don't use running stats at all
     }
@@ -2502,13 +2406,10 @@ private: // time-constant conversions
     {
         // in inference mode, only use long-term mean and do not update running estimates
         if (!Environment().IsTraining())
-        {
-            return 1.0; // (m_blendTimeConst == infinity) estimate is taken 100% from the long-term running estimate
-        }
+            return 1.0;                 // (m_blendTimeConst == infinity) estimate is taken 100% from the long-term running estimate
 
         // Initialization case: only use current minibatch.
-        if (IsRunCount0())
-            return 0;
+        if (m_samplesSeen == 0) return 0;
 
         // convert to blend factor (= weight for running stats)
         // The code below special-cases two boundary cases, but those are just the limit cases of the main formula.
@@ -2526,13 +2427,13 @@ public:
     {
         if (m_convertRunningVariancePending)
             LogicError("%ls: Failed to convert running variance until forward prop", NodeName().c_str());
-        FrameRange fr(Input(DATA)->GetMBLayout());
+        FrameRange fr(Input(0)->GetMBLayout());
 
-        Matrix<ElemType> sliceInputValue  = Input(DATA)->MaskedValueFor(fr);
-        const Matrix<ElemType>& scale     = Input(SCALE)->Value();
-        const Matrix<ElemType>& bias      = Input(BIAS)->Value();
-        Matrix<ElemType>& runMean         = Input(RUN_MEAN)->Value();
-        Matrix<ElemType>& runVariance     = Input(RUN_VAR)->Value();
+        Matrix<ElemType> sliceInputValue  = Input(0)->MaskedValueFor(fr);
+        const Matrix<ElemType>& scale     = Input(1)->Value();
+        const Matrix<ElemType>& bias      = Input(2)->Value();
+        Matrix<ElemType>& runMean         = Input(3)->Value();
+        Matrix<ElemType>& runVariance     = Input(4)->Value();
         Matrix<ElemType> sliceOutputValue = ValueFor(fr);
 
         assert(scale.GetNumRows() == bias.GetNumRows());
@@ -2556,16 +2457,11 @@ public:
                          /*out=*/ sliceOutputValue,              // (out) batch-normalized output value
                          m_epsilon,
                          *m_savedMean, *m_savedInvStdDev);       // (out) actual interpolated mean/stddev values. Note: unused/empty for blendFactor==1 for CNTK engine
-
-        // and update the denominator
-        if (expAvgFactor != 0 || blendFactor != 1)
-            AggregateRunCount(GetMBLayout()->GetActualNumSamples());
-
-        // gradient is as of now invalid
-        m_gradientValid = false;
     }
 
-    // Note: This function assumes that inputIndex=0 is called before the others, unless the DATA input takes no gradient.
+    // Note: This function assumes that inputIndex=0 is called before the others.
+    // BUGBUG: The node should not make assumptions in which order the inputs' derivates are computed. It currently assumes to start with 0.
+    // BUGBUG: If the input has no learnables (e.g. using BN instead of corpus mean/var norm), this will not be called for inputIndex=0 at all.
     virtual void BackpropToNonLooping(size_t inputIndex) override
     {
         // Must be in training mode.
@@ -2578,25 +2474,16 @@ public:
         if (m_savedInvStdDev->IsEmpty())
             LogicError("%ls: m_savedInvStdDev cannot be empty", NodeName().c_str());
 
-        FrameRange fr(Input(DATA)->GetMBLayout());
+        FrameRange fr(Input(0)->GetMBLayout());
 
-        if (inputIndex == DATA || !m_gradientValid) // derivative with respect to the input.
+        if (inputIndex == 0) // derivative with respect to the input.
         {
-            auto sliceOutputGrad          = MaskedGradientFor(fr);
-            auto sliceInputValue          = Input(DATA)->ValueFor(fr);
-            const Matrix<ElemType>& scale = Input(SCALE)->Value();
-            const Matrix<ElemType>& bias  = Input(BIAS)->Value();
+            auto sliceOutputGrad                = MaskedGradientFor(fr);
+            auto sliceInputValue                = Input(0)->ValueFor(fr);
+            const Matrix<ElemType>& scale       = Input(1)->Value();
+            const Matrix<ElemType>& bias        = Input(2)->Value();
 
-            // If inputIndex is not DATA and we get here, then it means that DATA receives no gradient.
-            // However, the underlying engine does not foresee this case, and thus always needs a place
-            // to store the gradient. Hence, in that case, we create a dummy object and use that instead.
-            bool needsInputGradient = (inputIndex == DATA);
-            if (needsInputGradient && m_gradientValid) // because otherwise we already computed it into the dummy location
-                LogicError("BackpropTo: Batch-normalization data gradient must be requested before all others.");
-            if (!needsInputGradient)
-                m_dDataDummy->Resize(sliceInputValue);
-            auto sliceInputGrad = needsInputGradient ? Input(DATA)->GradientFor(fr) : m_dDataDummy->AsReference();
-
+            auto sliceInputGrad = Input(0)->GradientFor(fr);
             m_dScale->Resize(scale); // gradients for scale and bias get stored here
             m_dBias->Resize(bias);
 
@@ -2604,27 +2491,38 @@ public:
 
             // Compute all derivatives in one step. Save derivatives with respect to scale and bias in temp matrices.
             m_bnEng->Backward(sliceInputValue, sliceOutputGrad, // (in)  input from below, gradient from above
-                              sliceInputGrad,                   // (out) gradient for data input goes here  --TODO: Check if cudnn engine adds the gradient, or just overwrites (BUGBUG). CNTK engine is OK.
+                              sliceInputGrad,                   // (out) gradient for data input goes here
                               scale,                            // (in)  out of scale and bias, only scale is needed in gradient propagation
                               blendFactor,                      // (in)  smoothing weight for running stats (1=use only running stats)
-                              *m_savedMean, *m_savedInvStdDev,  // (in)  saved mean/invstddev values used in ForwardProp()
+                              *m_savedMean, *m_savedInvStdDev,   // (in)  saved mean/invstddev values used in ForwardProp()
                               *m_dScale, *m_dBias);             // (out) gradients for scale and bias
-
-            m_gradientValid = true;
         }
-        if (inputIndex == SCALE) // derivative with respect to the scale, precomputed during input derivative computation
+        else if (inputIndex == 1) // derivative with respect to the scale
         {
             // Derivative with respect to the scale was precomputed during input derivative computation.
-            assert(m_gradientValid);
-            Input(SCALE)->Gradient() += *m_dScale;
+            Matrix<ElemType>& grad = Input(1)->Gradient();
+            grad.SetValue(grad.GetNumRows(), grad.GetNumCols(), grad.GetDeviceId(), m_dScale->Data());
+            // BUGBUG: ^^ This should add the gradient, not overwrite it.
         }
-        else if (inputIndex == BIAS) // derivative with respect to the bias, precomputed during input derivative computation
+        else if (inputIndex == 2) // derivative with respect to the bias
         {
             // Derivative with respect to the bias was precomputed during input derivative computation.
-            assert(m_gradientValid);
-            Input(BIAS)->Gradient() += *m_dBias;
+            Matrix<ElemType>& grad = Input(2)->Gradient();
+            grad.SetValue(grad.GetNumRows(), grad.GetNumCols(), grad.GetDeviceId(), m_dBias->Data());
+            // BUGBUG: ^^ Also here, this should add the gradient, not overwrite it.
         }
         // No derivatives with respect to running mean and variance.
+    }
+
+    virtual void EndForwardProp() override
+    {
+        // Update samples if not locked.
+        double expAvgFactor = ComputeExpAvgFactor(); // weight for the new MB statistics in the running estimate. The previous value of the running statistics is kept with weight (1-this)
+        double blendFactor  = ComputeBlendFactor();  // interpolation weight for the running statistics (the current MB statistics are weighted with 1-this)
+        if (expAvgFactor != 0 || blendFactor != 1)
+            m_samplesSeen += GetMBLayout()->GetActualNumSamples();
+
+        Base::EndForwardProp();
     }
 
     virtual bool OutputUsedInComputingInputNodesGradients() const override { return false; }
@@ -2632,29 +2530,18 @@ public:
     void Validate(bool isFinalValidationPass) override
     {
         Base::Validate(isFinalValidationPass);
-
-        if (GetNumInputs() != RUN_COUNT && GetNumInputs() != RUN_COUNT + 1)
-            InvalidArgument("%ls %ls operation accepts %d inputs.", NodeName().c_str(), OperationName().c_str(), (int)RUN_COUNT + 1);
-        // (we won't report that it also accepts RUN_COUNT inputs, as this is the deprecated legacy case)
-
         InferMBLayoutFromInputsForStandardCase(isFinalValidationPass);
 
-        SetDims(Input(DATA));
+        SetDims(Input(0));
 
-        const auto& inputLayout = Input(DATA)->GetSampleLayout();
-
-        // running statistics inputs must be learnable parameters, since we update them directly here
-        for (size_t i = RUN_MEAN; i < GetNumInputs(); i++)
-            //if (!Input(i)->Is<LearnableParameter<ElemType>>()) // somehow this does not compile on gcc (works on VS)
-            if (!dynamic_cast<LearnableParameter<ElemType>*>(Input(i).get()))
-                InvalidArgument("%ls: Inputs [%d..%d] must be learnable parameters.", NodeDescription().c_str(), (int)RUN_MEAN, (int)GetNumInputs());
+        const auto& inputLayout = Input(0)->GetSampleLayout();
 
         // infer dimensions of learnable parameters
         // BUGBUG: Parameter dimensions are totally wrong. E.g. a valid spatial bias for [15 x 15 x 32] is currently [32 x 1].
         //         The correct bias shape should be [1 x 1 x 32]. That can be specified but leads to different results for unknown reasons.
         //         Until this has been corrected, we need a workaround that infers the wrong dimensions.
 #if 1   // Workaround for today's definition: Trigger on [0 x 1] and infer that 0 as the total # elements needed.
-        for (size_t i = SCALE; i < RUN_COUNT; i++) // scale, bias, run_mean, and run_variance
+        for (size_t i = 1; i < GetNumInputs(); i++)
         {
             auto paramLayout = Input(i)->GetSampleLayout();
             if (paramLayout.GetRank() == 2 && paramLayout[0] == 0 && paramLayout[1] == 1 && inputLayout.GetNumElements() > 0) // [0 x 1]
@@ -2670,22 +2557,17 @@ public:
 
         if (isFinalValidationPass)
         {
-            // The current implementation requires that the gradient of the first operand/input be computed
-            // in order to compute gradients for the bias and scale parameters (2nd and 3rd inputs)
-            if (Environment().IsTraining() && ((Input(1)->NeedsGradient() || Input(2)->NeedsGradient()) && !Input(0)->NeedsGradient()))
-                InvalidArgument("%ls %ls currently supports learnable scale and bias parameters only if the first input also needs gradient (i.e. is dependent on at-least one learnable parameter).", NodeName().c_str(), OperationName().c_str());
-
             if (m_convertRunningVariancePending)
             {
                 // Prior to CNTK CuDNN v5 support (and the CNTK engine of the same time), mean and inverse standard deviation
                 // statistics were computed and stored. With CuDNN v5 (and the corresponding CNTK engine update), this was changed
                 // to mean and variance.
-                // To load an old model for further training or inference, Input(RUN_VAR) (which is inverse standard deviation) needs to
+                // To load an old model for further training or inference, Input(4) (which is inverse standard deviation) needs to
                 // be converted to variance, via v = 1/(isd^2) + epsilon, where 'v' is variance and 'isd' is inverse standard
                 // Since this is an approximation, we output a warning.
                 fprintf(stderr, "WARNING: %ls: loading pre-CuDNNv5 model: approximately converting variance statistics format\n",
                         NodeName().c_str());
-                Matrix<ElemType>& runInvStdDev = Input(RUN_VAR)->Value();
+                Matrix<ElemType>& runInvStdDev = Input(4)->Value();
                 runInvStdDev.AssignElementPowerOf(runInvStdDev, 2);
                 runInvStdDev.ElementInverse();
                 runInvStdDev += (float) m_epsilon;
@@ -2693,12 +2575,12 @@ public:
             }
 
             // check inputs
-            for (size_t i = SCALE; i < RUN_COUNT; i++) // scale, bias, run_mean, and run_variance
+            for (size_t i = 1; i < GetNumInputs(); i++)
             {
                 if (Input(i)->HasMBLayout())
                     InvalidArgument("%ls: Input[%d] has a dynamic axis. BatchNormalization parameters cannot have that.", NodeDescription().c_str(), (int)i);
                 auto paramLayout = Input(i)->GetSampleLayout();
-                if (paramLayout != Input(SCALE)->GetSampleLayout())
+                if (paramLayout != Input(1)->GetSampleLayout())
                     InvalidArgument("%ls: Input[%d] has a layout different from Input[1]. All must be identical.", NodeDescription().c_str(), (int)i);
 #if 0           // BUGBUG: For this to work, parameter shapes must be correct (cf. comment above on inference).
                 if (paramLayout.GetRank() > inputLayout.GetRank())
@@ -2708,13 +2590,6 @@ public:
                         InvalidArgument("%ls: Data input cannot broadcast.", NodeDescription().c_str());
 #endif
             }
-            
-            // This must always be a [1] tensor. No inference allowed.
-            size_t i = RUN_COUNT;
-            if (Input(i)->HasMBLayout() || Input(i)->GetSampleLayout() != TensorShape(1))
-                InvalidArgument("%ls: Input[%d] must be a vector of 1 element without dynamic axis.", NodeDescription().c_str(), (int)i);
-            RunCount(); // refresh the zero count flag value, for 0 checks
-
             if (m_spatial && m_imageLayoutKind != CHW)
             {
                 InvalidArgument(
@@ -2722,29 +2597,6 @@ public:
                     "Please specify imageLayout=\"cudnn\" in BatchNormalization node in your NDL/BrainScript "
                     "and make sure your input data layout is CHW", NodeName().c_str(), OperationName().c_str());
             }
-
-            if (!m_useCntkEngine)
-            {
-                // Fallback to cntk engine on CPU device if cuDnn is not available,
-                bool cpuDevice = (m_deviceId == CPUDEVICE);
-
-                // or if parameters cannot be handled by cuDnn (which is needed for compatibility when changing the default to cudnn)
-                // In Source/Math/CuDnnBatchNormalization.cu :
-                //   if (blendFactor != 0 && (blendFactor != 1 || expAvgFactor > 0))
-                //      InvalidArgument("cuDNN batch normalization engine currently supports blendTimeConstant of 0 or 1 only.");
-                // Check ComputeBlendFactor()/ComputeExpAvgFactor() for inferring blendFactor/expAvgFactor from m_blendTimeConst/m_normTimeConst
-                bool cuDnnUnsupportedParams = (m_blendTimeConst != 0 && (isfinite(m_blendTimeConst) || isfinite(m_normTimeConst)));
-
-                if (cpuDevice || cuDnnUnsupportedParams)
-                {
-                    m_useCntkEngine = true;
-                    if (cuDnnUnsupportedParams)
-                    {
-                        fprintf(stderr, "\nWARNING: batch normalization falls back to cntk engine for parameters not supported by cuDnn.\n");
-                    }
-                }
-            }
-
             double cudnnMinEps = 1e-5; // CUDNN_BN_MIN_EPSILON
             if (!m_useCntkEngine && m_epsilon < cudnnMinEps) 
                 fprintf(stderr, "\nWARNING: cuDNN batch normalization requires epsilon >= %e. Epsilon will be reset to that value.\n", cudnnMinEps);
@@ -2771,7 +2623,6 @@ public:
     void RequestMatricesBeforeBackprop(MatrixPool& matrixPool) override
     {
         Base::RequestMatricesBeforeBackprop(matrixPool);
-        RequestMatrixFromPool(m_dDataDummy, matrixPool);
         RequestMatrixFromPool(m_dScale, matrixPool);
         RequestMatrixFromPool(m_dBias, matrixPool);
     }
@@ -2781,7 +2632,6 @@ public:
         Base::ReleaseMatricesAfterBackprop(matrixPool);
         ReleaseMatrixToPool(m_savedMean, matrixPool);
         ReleaseMatrixToPool(m_savedInvStdDev, matrixPool);
-        ReleaseMatrixToPool(m_dDataDummy, matrixPool);
         ReleaseMatrixToPool(m_dScale, matrixPool);
         ReleaseMatrixToPool(m_dBias, matrixPool);
     }
@@ -2805,21 +2655,20 @@ public:
         m_blendTimeConst = std::numeric_limits<double>::infinity();
     }
 
-    // ResetStatisticsState() will set the batch normal statistics into initial state
-    // used for re-statistics the mean and variance of BN.
-    // In case of multiple BN nodes sharing statistics, this must be called on all.
-    // Any other use is undefined behavior.
+    // ResetStatisticsState will set the batch normal statistics into initial state
+    // used for re-statistics the mean and variance of BN
+    // any others use may lead undependable results, please be careful
     void ResetStatisticsState()
     {
-        ResetRunCount();
+        m_samplesSeen = 0;
         m_normTimeConst = 0;
         m_blendTimeConst = 0;
     }
     // Turn off the L1 and L2 regularization
     void DisableRegInBatchNormalization()
     {
-        let scaleNode = dynamic_pointer_cast<LearnableParameter<ElemType>>(Input(SCALE));
-        let biasNode  = dynamic_pointer_cast<LearnableParameter<ElemType>>(Input(BIAS));
+        let scaleNode   = dynamic_pointer_cast<LearnableParameter<ElemType>>(Input(1));
+        let biasNode    = dynamic_pointer_cast<LearnableParameter<ElemType>>(Input(2));
         scaleNode->SetRegMultiplier(0.f);
         biasNode->SetRegMultiplier(0.f);
     }
@@ -2879,30 +2728,23 @@ private:
 
     // --- working variables
 
-    //  - 0 checks test this first, to avoid unnecessary GPU syncs
-    mutable bool m_runCountIsZero;
-    
-    // we use this count to temporarily store the number of samples seen, loaded from a model file
-    // with a version < 19, before the running mean sample count was added as an addition input for
-    // BatchNorm node. The value is copied over into the corresponding input parameter inside the 
-    // AttachInputs() call.
-    size_t m_pre19SampleCount;
-    Matrix<ElemType> m_one;  // constant [1x1] matrix that contains a 1 (used for updating the shared count)
+    // Samples seen count, used to compute cumulative moving average.
+    size_t m_samplesSeen;
 
     // Interpolated actual mean/inverse stddev values. Pre-computed on forward pass, also used in gradient computation.
     shared_ptr<Matrix<ElemType>> m_savedMean;
     shared_ptr<Matrix<ElemType>> m_savedInvStdDev;
     // Temp buffer for scale and bias derivatives. Only used in BackpropTo(), carrying info from first call to subsequent calls.
     // Not used for blendFactor=1 in CNTK engine.
-    shared_ptr<Matrix<ElemType>> m_dDataDummy;
     shared_ptr<Matrix<ElemType>> m_dScale;
     shared_ptr<Matrix<ElemType>> m_dBias;
-
-    bool m_gradientValid = false;
 
     std::unique_ptr<BatchNormEngine<ElemType>> m_bnEng;
 
     bool m_convertRunningVariancePending;
 };
+
+template class BatchNormalizationNode<float>;
+template class BatchNormalizationNode<double>;
 
 }}}

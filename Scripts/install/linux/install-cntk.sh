@@ -6,17 +6,17 @@
 # for full license information.
 # ==============================================================================
 
-PY_VERSION=35
+PY_VERSION=34
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --py-version)
       case "$2" in
-        27 | 34 | 35)
+        34 | 35)
           PY_VERSION="$2"
           ;;
         *)
-          echo Invalid or missing value for --py-version option, please specify 27, 34, or 35.
+          echo Invalid or missing value for --py-version option, please specify 34 or 35.
           exit 1
           ;;
       esac
@@ -39,9 +39,6 @@ SCRIPT_DIR="$(readlink -f "$(dirname "${BASH_SOURCE[0]}")")"
 # Go to the drop root
 cd "$SCRIPT_DIR/../../.."
 
-PYWHEEL_QUALIFIER=cp$PY_VERSION-cp${PY_VERSION}m
-[ $PY_VERSION = 27 ] && PYWHEEL_QUALIFIER+=u
-
 CNTK_BIN_PATH="$PWD/cntk/bin"
 CNTK_LIB_PATH="$PWD/cntk/lib"
 CNTK_DEP_LIB_PATH="$PWD/cntk/dependencies/lib"
@@ -49,8 +46,7 @@ CNTK_EXAMPLES_PATH="$PWD/Examples"
 CNTK_TUTORIALS_PATH="$PWD/Tutorials"
 CNTK_BINARY="$CNTK_BIN_PATH/cntk"
 CNTK_PY_ENV_FILE="$SCRIPT_DIR/conda-linux-cntk-py$PY_VERSION-environment.yml"
-CNTK_WHEEL_PATH="cntk/python/cntk-2.0.beta11.0-$PYWHEEL_QUALIFIER-linux_x86_64.whl"
-
+CNTK_WHEEL_PATH="cntk/python/cntk-2.0.beta6.0-cp$PY_VERSION-cp${PY_VERSION}m-linux_x86_64.whl"
 test -d "$CNTK_BIN_PATH" && test -d "$CNTK_LIB_PATH" && test -d "$CNTK_DEP_LIB_PATH" && 
 test -d "$CNTK_TUTORIALS_PATH" &&
 test -d "$CNTK_EXAMPLES_PATH" && test -x "$CNTK_BINARY" &&

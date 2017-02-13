@@ -21,12 +21,6 @@
 #include <thread>
 #include <iostream>
 #include <algorithm>
-#pragma warning(push)
-#pragma warning(disable:4244) // 'conversion' conversion from 'type1' to 'type2', possible loss of data
-#include <boost/random/normal_distribution.hpp>
-#pragma warning(pop)
-#include <boost/random/uniform_real_distribution.hpp>
-
 #ifdef _WIN32
 #define NOMINMAX
 #include "Windows.h"
@@ -964,7 +958,7 @@ void CPUMatrix<ElemType>::SetDiagonalValue(const CPUMatrix<ElemType>& vector)
 
     if (vector.GetNumElements() == 1) // reduce to simple form
         SetDiagonalValue(vector(0, 0));
-    else if (vector.GetNumRows() != GetNumRows() && vector.GetNumCols() != GetNumRows())
+    else if (vector.GetNumRows() != GetNumRows())
         LogicError("SetDiagonalValue: input vector's dimension does not agree with [this].");
     else
     {
@@ -1014,9 +1008,13 @@ void CPUMatrix<ElemType>::SetUniformRandomValue(const ElemType low, const ElemTy
     if (IsEmpty())
         LogicError("SetUniformRandomValue: Matrix is empty.");
 
-    std::mt19937_64 generator;
+#ifdef _MSC_VER // TODO: check if available under GCC/Linux
+    std::ranlux64_base_01 generator;
     generator.seed(seed == USE_TIME_BASED_SEED ? (unsigned long) time(NULL) : seed);
-    boost::random::uniform_real_distribution<ElemType> r(low, high);
+#else
+    std::default_random_engine generator(seed);
+#endif
+    std::uniform_real_distribution<ElemType> r(low, high);
 
     ElemType* bufPtr = Data();
     long m = (long) GetNumElements();
@@ -1045,10 +1043,13 @@ void CPUMatrix<ElemType>::SetGaussianRandomValue(const ElemType mean, const Elem
         LogicError("SetUniformRandomValue: Matrix is empty.");
 
     auto& us = *this;
-
-    std::mt19937_64 generator(seed == USE_TIME_BASED_SEED ? (unsigned long) time(NULL) : seed);
-    boost::random::normal_distribution<ElemType> r(mean, sigma);
-
+#ifdef _MSC_VER // TODO: check if available under GCC/Linux
+    std::ranlux64_base_01 generator;
+    generator.seed(seed == USE_TIME_BASED_SEED ? (unsigned long) time(NULL) : seed);
+#else
+    std::default_random_engine generator(seed);
+#endif
+    std::normal_distribution<ElemType> r(mean, sigma);
     // #pragma omp parallel for   // is it thread safe?
     foreach_coord (i, j, us)
     {
@@ -1066,10 +1067,13 @@ void CPUMatrix<ElemType>::AddGaussianRandomValue(const ElemType mean, const Elem
         LogicError("SetUniformRandomValue: Matrix is empty.");
 
     auto& us = *this;
-
-    std::mt19937_64 generator;
+#ifdef _MSC_VER // TODO: check if available under GCC/Linux
+    std::ranlux64_base_01 generator;
     generator.seed(seed == USE_TIME_BASED_SEED ? (unsigned long) time(NULL) : seed);
-    boost::random::normal_distribution<ElemType> r(mean, sigma);
+#else
+    std::default_random_engine generator(seed);
+#endif
+    std::normal_distribution<ElemType> r(mean, sigma);
 
     long m = (long) GetNumRows(), n = (long) GetNumCols();
     for (long j = 0; j < n; j++)
@@ -1102,7 +1106,8 @@ void CPUMatrix<ElemType>::SetUniformRandomMask(const ElemType maskRate, const El
     assert(cpuRNGHandle != nullptr);
 
     auto& us = *this;
-    boost::random::uniform_real_distribution<ElemType> r(0, 1);
+    std::uniform_real_distribution<ElemType> r(0, 1);
+
     long m = (long) GetNumRows(), n = (long) GetNumCols();
     ElemType v;
     for (long j = 0; j < n; j++)
@@ -1198,11 +1203,8 @@ void CPUMatrix<ElemType>::FSAdagrad(CPUMatrix<ElemType>& gradients,
                                     ElemType learnRatePerSample,
                                     ElemType momentum,
                                     ElemType adaWeight,
-                                    ElemType adaMul,
-                                    bool unitGainMomentum)
+                                    ElemType adaMul)
 {
-    auto unitGainFactor = ElemType(unitGainMomentum ? (1.0 - momentum) : 1.0);
-
     size_t numColsNeeded = 2 * gradients.GetNumCols();
 
     if (IsEmpty() || (GetNumCols() < numColsNeeded))
@@ -1237,47 +1239,12 @@ void CPUMatrix<ElemType>::FSAdagrad(CPUMatrix<ElemType>& gradients,
 
         if (momentum > 0.0f)
         {
-            g = momentum * smoothMom[i] + unitGainFactor * g;
+            g = momentum * smoothMom[i] + (1.0f - momentum) * g;
             smoothMom[i] = g;
         }
 
         g *= learnRatePerSample;
         val[i] -= g;
-    }
-}
-
-template <class ElemType>
-void CPUMatrix<ElemType>::Adam(CPUMatrix<ElemType>& gradients, CPUMatrix<ElemType>& functionValues, ElemType learnRatePerSample,
-    ElemType momentum, ElemType adaWeight, ElemType adaMul, bool unitGainMomentum)
-{
-    size_t numColsNeeded = 2 * gradients.GetNumCols();
-    auto unitGainFactor = ElemType(unitGainMomentum ? (1.0 - momentum) : 1.0);
-
-    if (IsEmpty() || (GetNumCols() < numColsNeeded))
-    {
-        RequireSize(gradients.GetNumRows(), numColsNeeded);
-        SetValue(0.0);
-    }
-
-    assert((GetNumRows() == gradients.GetNumRows()) && (GetNumCols() == numColsNeeded));
-
-    size_t n = gradients.GetNumElements();
-    ElemType* grad = gradients.Data();
-    ElemType* smoothAda = Data();
-    ElemType* smoothMom = Data() + n;
-    ElemType* val = functionValues.Data();
-#pragma omp parallel for
-    // TODO: Unroll 4-times for better performance leveraging vectorization
-    for (long i = 0; i < n; i++)
-    {
-        ElemType g = grad[i];
-        ElemType adaSqr = adaWeight * smoothAda[i] + (1.0f - adaWeight) * g * g;
-        smoothAda[i] = adaSqr;
-        ElemType ada = sqrt(adaSqr);
-        ElemType w = adaMul * (ElemType)( 1.0 / (ada + 1e-8));
-        g = momentum * smoothMom[i] + unitGainFactor * g;
-        smoothMom[i] = g;
-        val[i] -= g * w * learnRatePerSample;
     }
 }
 
@@ -6110,16 +6077,6 @@ int CPUMatrix<ElemType>::SetNumThreads(int numThreads)
     return numThreads;
 }
 
-template <class ElemType>
-int CPUMatrix<ElemType>::GetMaxNumThreads()
-{
-    int numThreads = (int)std::thread::hardware_concurrency();
-#ifdef _OPENMP
-    numThreads = omp_get_max_threads();
-#endif
-    return numThreads;
-}
-
 // To ensure Intel MKL calls return the same results on all Intel or Intel compatible CPUs,
 // the function set CBWR compatible mode.
 template <class ElemType>
@@ -6376,7 +6333,6 @@ static void TensorOpWithFn(ElemType beta, array<ElemType*, N> pointers, ElemType
         CaseTensorOpWithFnAndReduction(LogSum);
         CaseTensorOpWithFnAndReduction(Min);
         CaseTensorOpWithFnAndReduction(Max);
-        CaseTensorOpWithFnAndReduction(ElementwiseProduct);
     default:
         LogicError("Specified ElementWiseOperator op %d not suported as reduction operation.", (int)reductionOp);
     }
@@ -6397,8 +6353,7 @@ void CPUMatrix<ElemType>::TensorOp(ElemType beta, const CPUMatrix<ElemType>& a, 
     if (reductionOp != ElementWiseOperator::opSum    &&
         reductionOp != ElementWiseOperator::opLogSum &&
         reductionOp != ElementWiseOperator::opMin    &&
-        reductionOp != ElementWiseOperator::opMax    &&
-        reductionOp != ElementWiseOperator::opElementwiseProduct)
+        reductionOp != ElementWiseOperator::opMax)
         InvalidArgument("TensorOp: Unary reduction operations other than opMax, opMin, opSum, and opLogSum are not implemented.");
 
 // TODO: Change the lambda to take a pointer and a number of elements, so that we can pass it 1 or 4 elements, in order for it to SSE-vectorize.

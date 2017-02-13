@@ -30,7 +30,7 @@ Grayscale_Test = [
             height=4
             channels=1
             cropType=Center
-            sideRatio=1.0
+            cropRatio=1.0
             jitterType=UniRatio
             interpolations=linear
         ]

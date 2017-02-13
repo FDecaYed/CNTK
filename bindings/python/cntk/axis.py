@@ -102,17 +102,6 @@ class Axis(cntk_py.Axis):
 
     @staticmethod
     @typemap
-    def all_axes():
-        '''
-        Axis object representing all the axes of an operand.
-
-        Returns:
-            :class:`Axis`: all axes
-        '''
-        return cntk_py.Axis.all_axes()
-
-    @staticmethod
-    @typemap
     def default_input_variable_dynamic_axes():
         '''
         Default dynamic axes of the input variable
@@ -146,14 +135,3 @@ class Axis(cntk_py.Axis):
             :class:`Axis`: new unique dynamic axis
         '''
         return cntk_py.Axis.new_unique_dynamic_axis(name)
-
-    @staticmethod
-    @typemap
-    def end_static_axis():
-        '''
-        Creates an Axis object representing the end (one past last) static axis.
-
-        Returns:
-            :class:`Axis`: axis object representing the end (one past last) static axis.
-        '''
-        return cntk_py.Axis.end_static_axis()

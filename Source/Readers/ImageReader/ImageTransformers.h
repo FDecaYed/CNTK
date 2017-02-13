@@ -24,9 +24,6 @@ struct ImageSequenceData : DenseSequenceData
 {
     cv::Mat m_image;
 
-    uint8_t  m_copyIndex;            // Index of the copy. Used in i.e. Multicrop,
-                                     // when deserializer provides several copies of the same sequence.
-
     const void* GetDataBuffer() override
     {
         if (!m_image.isContinuous())
@@ -73,7 +70,7 @@ protected:
     }
 
     // The only function that should be redefined by the inherited classes.
-    virtual void Apply(uint8_t copyId, cv::Mat &from) = 0;
+    virtual void Apply(size_t id, cv::Mat &from) = 0;
 
     conc_stack<std::unique_ptr<std::mt19937>> m_rngs;
 };
@@ -86,43 +83,30 @@ public:
     explicit CropTransformer(const ConfigParameters& config);
 
 private:
-    void Apply(uint8_t copyId, cv::Mat &mat) override;
+    void Apply(size_t id, cv::Mat &mat) override;
 
 private:
     enum class RatioJitterType
     {
         None = 0,
-        UniRatio = 1
+        UniRatio = 1,
+        UniLength = 2,
+        UniArea = 3
     };
 
     void StartEpoch(const EpochConfiguration &config) override;
 
     RatioJitterType ParseJitterType(const std::string &src);
-
-    // assistent functions for GetCropRect****(). 
-    double ApplyRatioJitter(const double minVal, const double maxVal, std::mt19937 &rng);
-
-    cv::Rect GetCropRectCenter(int crow, int ccol, std::mt19937 &rng);
-    cv::Rect GetCropRectRandomSide(int crow, int ccol, std::mt19937 &rng);
-    cv::Rect GetCropRectRandomArea(int crow, int ccol, std::mt19937 &rng);
-    cv::Rect GetCropRectMultiView10(int viewIndex, int crow, int ccol, std::mt19937 &rng);
+    cv::Rect GetCropRect(CropType type, int viewIndex, int crow, int ccol, double cropRatio, std::mt19937 &rng);
 
     conc_stack<std::unique_ptr<std::mt19937>> m_rngs;
-    CropType m_cropType; 
-    int m_cropWidth; 
-    int m_cropHeight; 
-
-    bool m_useSideRatio; 
-    double m_sideRatioMin;
-    double m_sideRatioMax;
-    bool m_useAreaRatio; 
-    double m_areaRatioMin;
-    double m_areaRatioMax;
-    double m_aspectRatioMin;
-    double m_aspectRatioMax; 
-
+    CropType m_cropType;
+    double m_cropRatioMin;
+    double m_cropRatioMax;
     RatioJitterType m_jitterType;
     bool m_hFlip;
+    doubleargvector m_aspectRatioRadius;
+    double m_curAspectRatioRadius;
 };
 
 // Scale transformation of the image.
@@ -141,7 +125,7 @@ private:
         Crop = 1,
         Pad  = 2
     };
-    void Apply(uint8_t copyId, cv::Mat &mat) override;
+    void Apply(size_t id, cv::Mat &mat) override;
 
     size_t m_imgWidth;
     size_t m_imgHeight;
@@ -160,7 +144,7 @@ public:
     explicit MeanTransformer(const ConfigParameters& config);
 
 private:
-    void Apply(uint8_t copyId, cv::Mat &mat) override;
+    void Apply(size_t id, cv::Mat &mat) override;
 
     cv::Mat m_meanImg;
 };
@@ -211,11 +195,12 @@ public:
 private:
     void StartEpoch(const EpochConfiguration &config) override;
 
-    void Apply(uint8_t copyId, cv::Mat &mat) override;
+    void Apply(size_t id, cv::Mat &mat) override;
     template <typename ElemType>
     void Apply(cv::Mat &mat);
 
-    double m_stdDev;
+    doubleargvector m_stdDev;
+    double m_curStdDev;
 
     cv::Mat m_eigVal;
     cv::Mat m_eigVec;
@@ -233,13 +218,16 @@ public:
 private:
     void StartEpoch(const EpochConfiguration &config) override;
 
-    void Apply(uint8_t copyId, cv::Mat &mat) override;
+    void Apply(size_t id, cv::Mat &mat) override;
     template <typename ElemType>
     void Apply(cv::Mat &mat);
 
-    double m_brightnessRadius;
-    double m_contrastRadius;
-    double m_saturationRadius;
+    doubleargvector m_brightnessRadius;
+    double m_curBrightnessRadius;
+    doubleargvector m_contrastRadius;
+    double m_curContrastRadius;
+    doubleargvector m_saturationRadius;
+    double m_curSaturationRadius;
 
     conc_stack<std::unique_ptr<std::mt19937>> m_rngs;
     conc_stack<std::unique_ptr<cv::Mat>> m_hsvTemp;

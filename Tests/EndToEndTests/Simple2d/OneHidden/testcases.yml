@@ -1,7 +1,9 @@
 dataDir: ../Data
 
 tags:
-    - bvt-e ((flavor == 'release') if (os == 'windows') else ((flavor == 'debug') ^ (device == 'cpu')))
+    # running on every BVT job in 'E' (Examples) leg
+    - bvt-e ((flavor=='debug') ^ (device=='cpu')) 
+    # running every Nightly job in 'E' (Examples) leg
     - nightly-e
 
 testCases:

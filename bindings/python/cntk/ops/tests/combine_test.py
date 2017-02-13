@@ -11,8 +11,8 @@ Unit tests for combine operation, only forward pass is tested
 from __future__ import division
 import numpy as np
 import pytest
-from .ops_test_utils import AA, I, precision, PRECISION_TO_TYPE, compare_lists_of_np_arrays, cntk_device
-from ...utils import sanitize_dtype_cntk, eval as cntk_eval
+from .ops_test_utils import AA, I, precision, PRECISION_TO_TYPE, compare_lists_of_np_arrays
+from ...utils import sanitize_dtype_cntk, eval as cntk_eval, cntk_device
 
 from .. import plus, minus, classification_error, cross_entropy_with_softmax
 
@@ -62,14 +62,3 @@ def test_op_combine(left_operand, right_operand, operations, expected_results, d
     results = list(forward_results.values())
 
     assert compare_lists_of_np_arrays(results, expected_forward_results)
-
-
-def test_op_combine_input_var():
-    from .. import combine, input_variable
-
-    x = input_variable(shape=(2))
-    func = combine([x])
-    value = [[1, 2]]
-    res = func.eval({x : value})
-    
-    assert np.allclose(res, [[1, 2]])

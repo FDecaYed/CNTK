@@ -32,7 +32,7 @@ if not datasetName.startswith("pascalVoc"):
 
     for subdir in subDirs:
         makeDirectory(roiDir + subdir)
-        imgFilenames = getFilesInDirectory(os.path.join(imgDir, subdir), ".jpg")
+        imgFilenames = getFilesInDirectory(imgDir + subdir, ".jpg")
 
         # loop over all images
         for imgIndex,imgFilename in enumerate(imgFilenames):
@@ -41,7 +41,7 @@ if not datasetName.startswith("pascalVoc"):
             # load image
             print (imgIndex, len(imgFilenames), subdir, imgFilename)
             tstart = datetime.datetime.now()
-            imgPath = os.path.join(imgDir, subdir, imgFilename)
+            imgPath = imgDir + subdir + "/" + imgFilename
             imgOrig = imread(imgPath)
             if imWidth(imgPath) > imHeight(imgPath):
                 print (imWidth(imgPath) , imHeight(imgPath))

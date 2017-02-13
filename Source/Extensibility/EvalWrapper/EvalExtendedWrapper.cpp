@@ -71,7 +71,7 @@ public ref class ValueBuffer
             Buffer = gcnew cli::array<ElemType>(bufferSize);
             Indices = gcnew cli::array<int>(bufferSize);
             ColIndices = gcnew cli::array<int>(colIndicesSize);
-            Size = colIndicesSize;
+            Size = colIndicesSize - 1;
         }
 
         //
@@ -277,15 +277,6 @@ public:
     //
     void ForwardPass(cli::array<ValueBuffer<ElemType>^>^ inputs, cli::array<ValueBuffer<ElemType>^>^ outputs)
     {
-        ForwardPass(inputs, outputs, true);
-    }
-
-    //
-    // Same as above, and
-    // resetRNN - flags whether to reset memory cells of RNN. 
-    //
-    void ForwardPass(cli::array<ValueBuffer<ElemType>^>^ inputs, cli::array<ValueBuffer<ElemType>^>^ outputs, bool resetRNN)
-    {
         if (m_eval == nullptr)
         {
             throw gcnew ObjectDisposedException("Object has been disposed.");
@@ -307,7 +298,7 @@ public:
 
             try
             {
-                m_eval->ForwardPass(stdInputs, stdOutputs, resetRNN);
+                m_eval->ForwardPass(stdInputs, stdOutputs);
 
                 // Update actual output size.
                 for (int i = 0; i < outputs->Length; ++i)

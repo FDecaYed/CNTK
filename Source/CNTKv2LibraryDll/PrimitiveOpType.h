@@ -66,14 +66,8 @@ namespace CNTK
         Sin = 54,
         Cos = 55,
         Pass = 56,
-        Block = 57,
-        Unpooling = 58,
-        LambdaRank = 59,
-        NDCG = 60,
-        EditDistanceError = 61,
-        NoOp = 62,
         // New op types should only be appended to the end of this list.
-        // If you append here, also add checks in SerializationTests (CheckEnumValuesNotModified)
-        // and bump up PrimitiveFunction::s_serializationVersion and update PrimitiveFunction::Deserialize
+        // If you append here also add checks in SerializationTests (CheckEnumValuesNotModified)
+        // and bump up PrimitiveFunction::s_serializationVersion
     };
 }

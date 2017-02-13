@@ -61,6 +61,7 @@ public:
     using Base::IsEmpty;
     using Base::VerifySize;
 
+
 public:
     CPUMatrix();
     CPUMatrix(const CPUMatrix<ElemType>& shallowCopyFrom, bool shallow);     // copy constructor, shallow
@@ -92,13 +93,7 @@ public:
     CPUMatrix<ElemType> Diagonal() const;
 
     ElemType Adagrad(CPUMatrix<ElemType>& gradients, const bool needAveMultiplier);
-    
-    void FSAdagrad(CPUMatrix<ElemType>& gradients, CPUMatrix<ElemType>& functionValues, ElemType learnRatePerSample, 
-                   ElemType momentum, ElemType adaWeight, ElemType adaMul, bool unitGainMomentum);
-
-    void Adam(CPUMatrix<ElemType>& gradients, CPUMatrix<ElemType>& functionValues, ElemType learnRatePerSample,
-        ElemType momentum, ElemType adaWeight, ElemType adaMul, bool unitGainMomentum);
-
+    void FSAdagrad(CPUMatrix<ElemType>& gradients, CPUMatrix<ElemType>& functionValues, ElemType learnRatePerSample, ElemType momentum, ElemType adaWeight, ElemType adaMul);
     ElemType RmsProp(CPUMatrix<ElemType>& gradients,
                      ElemType RMS_GAMMA,
                      ElemType RMS_WGT_INC,
@@ -395,8 +390,6 @@ public:
 public:
     // This functions do not depend on <ElemType>, i.e. you can call them on any <ElemType>
     static int SetNumThreads(int numThreads);
-    static int GetMaxNumThreads();
-
     static void SetCompatibleMode();
 
     // static BLAS functions
